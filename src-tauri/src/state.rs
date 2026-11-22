@@ -19,6 +19,9 @@ pub const STATE_SCHEMA_VERSION: u32 = 1;
 /// Maximum number of entries retained in [`PersistedState::recent_files`].
 pub const MAX_RECENT_FILES: usize = 10;
 
+/// Maximum number of per-document entries retained in [`PersistedState::positions`].
+pub const MAX_SAVED_POSITIONS: usize = 200;
+
 /// Viewport zoom mode persisted per document.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -119,6 +122,7 @@ impl PersistedState {
         }
 
         loaded.normalize_recents();
+        loaded.prune_excess_positions(None);
         loaded
     }
 
@@ -204,6 +208,7 @@ impl PersistedState {
             self.positions.remove(&existing_key);
         }
         self.positions.insert(key.to_owned(), position);
+        self.prune_excess_positions(Some(key));
 
         if let Some(recent) = self
             .recent_files
@@ -278,6 +283,48 @@ impl PersistedState {
             }
         }
         self.recent_files = deduped;
+    }
+
+    fn prune_excess_positions(&mut self, keep_key: Option<&str>) {
+        if self.positions.len() <= MAX_SAVED_POSITIONS {
+            return;
+        }
+
+        let mut removable: Vec<String> = self
+            .positions
+            .keys()
+            .filter(|stored_key| {
+                let is_kept = keep_key.is_some_and(|key| paths_equal(stored_key, key));
+                let is_recent = self
+                    .recent_files
+                    .iter()
+                    .any(|entry| paths_equal(&entry.path, stored_key));
+                !is_kept && !is_recent
+            })
+            .cloned()
+            .collect();
+        removable.sort();
+
+        let excess = self.positions.len().saturating_sub(MAX_SAVED_POSITIONS);
+        for key in removable.into_iter().take(excess) {
+            self.positions.remove(&key);
+        }
+
+        // If still over cap (unlikely since MAX_RECENT_FILES <= MAX_SAVED_POSITIONS), drop
+        // deterministic lexicographic keys excluding `keep_key`.
+        if self.positions.len() > MAX_SAVED_POSITIONS {
+            let mut remaining: Vec<String> = self
+                .positions
+                .keys()
+                .filter(|stored_key| !keep_key.is_some_and(|key| paths_equal(stored_key, key)))
+                .cloned()
+                .collect();
+            remaining.sort();
+            let extra = self.positions.len().saturating_sub(MAX_SAVED_POSITIONS);
+            for key in remaining.into_iter().take(extra) {
+                self.positions.remove(&key);
+            }
+        }
     }
 }
 
@@ -718,5 +765,25 @@ mod tests {
     fn app_state_is_send_and_sync_static() {
         fn assert_send_sync<T: Send + Sync + 'static>() {}
         assert_send_sync::<AppState>();
+    }
+
+    #[test]
+    fn save_reading_position_caps_positions_while_preserving_recent_entries() {
+        let mut state = PersistedState::default();
+        let pos = ReadingPosition {
+            page_index: 3,
+            zoom_mode: ZoomMode::FitWidth,
+            zoom_scale: 1.0,
+        };
+        let _ = state.record_open("/docs/recent.pdf", "recent", 10, 1000);
+        state.save_reading_position("/docs/recent.pdf", pos);
+
+        for i in 0..(MAX_SAVED_POSITIONS + 25) {
+            let path = format!("/docs/doc-{i:04}.pdf");
+            state.save_reading_position(&path, pos);
+        }
+
+        assert!(state.positions.len() <= MAX_SAVED_POSITIONS);
+        assert!(state.positions.contains_key("/docs/recent.pdf"));
     }
 }

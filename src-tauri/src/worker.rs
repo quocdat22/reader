@@ -182,8 +182,12 @@ impl DocumentWorker {
         height_px: u32,
         epoch: u64,
     ) -> Result<RenderedPage, ReaderError> {
+        if is_closing(&self.closing_documents, document_id) {
+            return Err(ReaderError::Cancelled);
+        }
+
         let previous = self.render_epoch.fetch_max(epoch, Ordering::AcqRel);
-        if epoch < previous || is_closing(&self.closing_documents, document_id) {
+        if epoch < previous {
             return Err(ReaderError::Cancelled);
         }
 
@@ -972,5 +976,34 @@ mod tests {
 
         assert!(matches!(render_result, Err(ReaderError::Cancelled)));
         assert_eq!(render_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn closing_tab_render_does_not_advance_render_epoch_for_other_tabs() {
+        let dir = TempDirGuard::new("closing-epoch-isolation");
+        let file = dir.create_dummy_pdf("doc.pdf");
+
+        let open_calls = Arc::new(AtomicUsize::new(0));
+        let drop_flags = Arc::new(Mutex::new(Vec::new()));
+        let render_calls = Arc::new(AtomicUsize::new(0));
+
+        let worker = DocumentWorker::spawn_with_opener(make_mock_opener(
+            open_calls,
+            drop_flags,
+            render_calls,
+            None,
+        ))
+        .expect("spawn worker");
+
+        let doc = worker.open_document(file).await.expect("open doc");
+        mark_closing(&worker.closing_documents, doc.document_id);
+
+        let before_epoch = worker.current_render_epoch();
+        let res = worker
+            .render_page(doc.document_id, 0, 64, 64, before_epoch + 500)
+            .await;
+
+        assert!(matches!(res, Err(ReaderError::Cancelled)));
+        assert_eq!(worker.current_render_epoch(), before_epoch);
     }
 }

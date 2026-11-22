@@ -1,6 +1,7 @@
 //! `MuPDF`-backed implementation of [`DocumentBackend`].
 
-use std::fs;
+use std::fs::File;
+use std::io::Read;
 use std::path::Path;
 
 use mupdf::text_page::{SearchHitResponse, TextBlockType};
@@ -11,7 +12,8 @@ use mupdf::{
 
 use super::{
     DocumentBackend, DocumentMetadata, NormalizedRect, OutlineItem, PageDimensions, PagePointsRect,
-    RenderedPage, SearchMatch, TextSpan, clamp_render_dimensions, normalize_top_left_rect_in_box,
+    RenderedPage, SearchMatch, TextSpan, clamp_render_dimensions, has_pdf_extension,
+    normalize_top_left_rect_in_box,
 };
 use crate::error::ReaderError;
 
@@ -20,6 +22,12 @@ const MAX_OUTLINE_DEPTH: usize = 64;
 
 /// Maximum anti-aliasing bit depth supported by `MuPDF` (256-level grayscale AA).
 const MUPDF_MAX_AA_BITS: i32 = 8;
+
+/// Minimum supported page width/height in PDF points to prevent subnormal CTM scale overflow.
+const MIN_PAGE_POINTS: f32 = 1e-3;
+
+/// Maximum file size (256 MiB) read into memory when forcing the PDF handler for non-`.pdf` or non-UTF-8 paths.
+const MAX_IN_MEMORY_PDF_BYTES: usize = 256 * 1024 * 1024;
 
 /// Horizontal gap multiplier (in em units) above which a text line splits into separate
 /// contiguous runs (e.g., separating multi-column gutters or adjacent table cells).
@@ -77,17 +85,9 @@ impl PdfBackend {
         for index in 0..raw_count {
             let page = document.load_page(index).map_err(map_open_error)?;
             let bounds = page.bounds().map_err(map_open_error)?;
-            let width_pt = (bounds.x1 - bounds.x0).abs();
-            let height_pt = (bounds.y1 - bounds.y0).abs();
-            if !width_pt.is_finite()
-                || !height_pt.is_finite()
-                || width_pt <= 0.0
-                || height_pt <= 0.0
-            {
-                return Err(ReaderError::InvalidDocument(format!(
-                    "page {index} has invalid bounds ({width_pt}x{height_pt} pt)"
-                )));
-            }
+            let (_, _, width_pt, height_pt) = validate_page_bounds(bounds).ok_or_else(|| {
+                ReaderError::InvalidDocument(format!("page {index} has invalid bounds"))
+            })?;
             page_dimensions.push(PageDimensions {
                 width_pt,
                 height_pt,
@@ -153,13 +153,9 @@ impl DocumentBackend for PdfBackend {
         let bounds = page
             .bounds()
             .map_err(|err| ReaderError::Internal(format!("failed to read page bounds: {err}")))?;
-        let page_w = bounds.x1 - bounds.x0;
-        let page_h = bounds.y1 - bounds.y0;
-        if !page_w.is_finite() || !page_h.is_finite() || page_w <= 0.0 || page_h <= 0.0 {
-            return Err(ReaderError::Internal(format!(
-                "page {page_index} has invalid bounds"
-            )));
-        }
+        let (min_x, min_y, page_w, page_h) = validate_page_bounds(bounds).ok_or_else(|| {
+            ReaderError::Internal(format!("page {page_index} has invalid bounds"))
+        })?;
 
         #[expect(
             clippy::cast_precision_loss,
@@ -171,9 +167,19 @@ impl DocumentBackend for PdfBackend {
             reason = "clamped render dimensions are <= 4096, which fit exactly in f32 mantissa"
         )]
         let scale_y = (clamped_h as f32) / page_h;
+        if !scale_x.is_finite() || !scale_y.is_finite() || scale_x <= 0.0 || scale_y <= 0.0 {
+            return Err(ReaderError::Internal(format!(
+                "page {page_index} produced invalid render scale"
+            )));
+        }
 
-        let mut ctm = Matrix::new_translate(-bounds.x0, -bounds.y0);
+        let mut ctm = Matrix::new_translate(-min_x, -min_y);
         ctm.concat(Matrix::new_scale(scale_x, scale_y));
+        if !matrix_is_finite(&ctm) {
+            return Err(ReaderError::Internal(format!(
+                "page {page_index} produced non-finite transform matrix"
+            )));
+        }
 
         let colorspace = Colorspace::device_rgb();
         let mut pixmap = Pixmap::new_with_w_h(&colorspace, target_w, target_h, true)
@@ -287,13 +293,77 @@ impl DocumentBackend for PdfBackend {
 }
 
 fn open_mupdf_document(path: &Path) -> Result<Document, ReaderError> {
-    if let Some(utf8_path) = path.to_str() {
+    // Only use MuPDF's path-based opener when the path ends with `.pdf` so MuPDF never
+    // dispatches to non-PDF format handlers (e.g. HTML, SVG, EPUB) by filename extension.
+    if has_pdf_extension(path)
+        && let Some(utf8_path) = path.to_str()
+    {
         return Document::open(utf8_path).map_err(map_open_error);
     }
 
-    // Fall back to in-memory loading only for rare non-UTF-8 Windows paths.
-    let bytes = fs::read(path)?;
+    let bytes = read_bounded_pdf_bytes(path, MAX_IN_MEMORY_PDF_BYTES)?;
     Document::from_bytes(&bytes, ".pdf").map_err(map_open_error)
+}
+
+fn read_bounded_pdf_bytes(path: &Path, max_bytes: usize) -> Result<Vec<u8>, ReaderError> {
+    let file = File::open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
+        return Err(ReaderError::UnsupportedFormat(
+            "non-regular file".to_owned(),
+        ));
+    }
+    if metadata.len() > max_bytes as u64 {
+        return Err(ReaderError::InvalidDocument(
+            "PDF file exceeds maximum supported in-memory size".to_owned(),
+        ));
+    }
+
+    let initial_cap = usize::try_from(metadata.len()).unwrap_or(0).min(max_bytes);
+    let mut bytes = Vec::with_capacity(initial_cap);
+    file.take(max_bytes as u64 + 1).read_to_end(&mut bytes)?;
+    if bytes.len() > max_bytes {
+        return Err(ReaderError::InvalidDocument(
+            "PDF file exceeds maximum supported in-memory size".to_owned(),
+        ));
+    }
+    Ok(bytes)
+}
+
+fn validate_page_bounds(bounds: Rect) -> Option<(f32, f32, f32, f32)> {
+    if !bounds.x0.is_finite()
+        || !bounds.y0.is_finite()
+        || !bounds.x1.is_finite()
+        || !bounds.y1.is_finite()
+    {
+        return None;
+    }
+
+    let width_pt = (bounds.x1 - bounds.x0).abs();
+    let height_pt = (bounds.y1 - bounds.y0).abs();
+    if !width_pt.is_finite()
+        || !height_pt.is_finite()
+        || width_pt < MIN_PAGE_POINTS
+        || height_pt < MIN_PAGE_POINTS
+    {
+        return None;
+    }
+
+    Some((
+        bounds.x0.min(bounds.x1),
+        bounds.y0.min(bounds.y1),
+        width_pt,
+        height_pt,
+    ))
+}
+
+fn matrix_is_finite(matrix: &Matrix) -> bool {
+    matrix.a.is_finite()
+        && matrix.b.is_finite()
+        && matrix.c.is_finite()
+        && matrix.d.is_finite()
+        && matrix.e.is_finite()
+        && matrix.f.is_finite()
 }
 
 fn extract_metadata(document: &Document, page_count: usize) -> DocumentMetadata {
@@ -510,6 +580,8 @@ fn map_open_error(err: MuPdfError) -> ReaderError {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
 
     fn sample_page_box() -> PagePointsRect {
@@ -637,5 +709,84 @@ mod tests {
             "expected PasswordProtected, got {:?}",
             result.err()
         );
+    }
+
+    #[test]
+    fn open_rejects_tiny_userunit_page_dimensions() {
+        let dir =
+            std::env::temp_dir().join(format!("reader-tiny-userunit-test-{}", std::process::id()));
+        fs::create_dir_all(&dir).expect("create temp dir");
+        let pdf_path = dir.join("tiny-userunit.pdf");
+
+        // MuPDF clamps MediaBox < 1 to fz_unit_rect, then multiplies by UserUnit,
+        // so tiny UserUnit produces page bounds < MIN_PAGE_POINTS (1e-3).
+        let pdf_bytes = concat!(
+            "%PDF-1.4\n",
+            "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+            "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+            "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 1 1] /UserUnit 0.0001 >>\nendobj\n",
+            "trailer\n<< /Size 4 /Root 1 0 R >>\n",
+            "startxref\n0\n%%EOF\n"
+        );
+        fs::write(&pdf_path, pdf_bytes.as_bytes()).expect("write tiny userunit pdf");
+
+        let result = PdfBackend::open(&pdf_path);
+        let _ = fs::remove_dir_all(&dir);
+
+        assert!(
+            matches!(result, Err(ReaderError::InvalidDocument(_))),
+            "expected InvalidDocument for tiny UserUnit bounds, got {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn validate_page_bounds_rejects_subnormal_and_non_finite_rects() {
+        assert_eq!(
+            validate_page_bounds(Rect::new(0.0, 0.0, 1e-40, 1e-40)),
+            None
+        );
+        assert_eq!(
+            validate_page_bounds(Rect::new(0.0, 0.0, f32::INFINITY, 100.0)),
+            None
+        );
+        assert_eq!(
+            validate_page_bounds(Rect::new(0.0, 0.0, f32::NAN, 100.0)),
+            None
+        );
+        assert_eq!(
+            validate_page_bounds(Rect::new(200.0, 200.0, 0.0, 0.0)),
+            Some((0.0, 0.0, 200.0, 200.0))
+        );
+    }
+
+    #[test]
+    fn render_page_handles_inverted_mediabox_cleanly() {
+        let dir = std::env::temp_dir().join(format!(
+            "reader-inverted-mediabox-test-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).expect("create temp dir");
+        let pdf_path = dir.join("inverted.pdf");
+
+        let pdf_bytes = concat!(
+            "%PDF-1.4\n",
+            "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+            "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+            "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [200 200 0 0] >>\nendobj\n",
+            "trailer\n<< /Size 4 /Root 1 0 R >>\n",
+            "startxref\n0\n%%EOF\n"
+        );
+        fs::write(&pdf_path, pdf_bytes.as_bytes()).expect("write inverted mediabox pdf");
+
+        let mut backend = PdfBackend::open(&pdf_path).expect("inverted MediaBox opens");
+        let rendered = backend
+            .render_page(0, 64, 64)
+            .expect("inverted MediaBox renders cleanly");
+        let _ = fs::remove_dir_all(&dir);
+
+        assert_eq!(rendered.width_px, 64);
+        assert_eq!(rendered.height_px, 64);
+        assert_eq!(rendered.rgba.len(), 64 * 64 * 4);
     }
 }

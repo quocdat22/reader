@@ -693,6 +693,10 @@ async function bootstrap() {
     }
   });
 
+  // Prevent unintended WebView navigation if non-file links or text are dropped onto the window.
+  window.addEventListener("dragover", (event) => event.preventDefault());
+  window.addEventListener("drop", (event) => event.preventDefault());
+
   // Subscribe to native Tauri window file drag-and-drop events.
   try {
     await subscribeDragDrop({

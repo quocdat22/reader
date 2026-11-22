@@ -301,8 +301,14 @@ pub fn normalize_top_left_rect_in_box(
 /// - Returns [`ReaderError::PasswordProtected`] or [`ReaderError::InvalidDocument`]
 ///   if the backend fails to open the file.
 pub fn open(path: &Path) -> Result<Box<dyn DocumentBackend>, ReaderError> {
-    if std::fs::metadata(path)?.is_dir() {
+    let metadata = std::fs::metadata(path)?;
+    if metadata.is_dir() {
         return Err(ReaderError::UnsupportedFormat("folder".to_owned()));
+    }
+    if !metadata.is_file() {
+        return Err(ReaderError::UnsupportedFormat(
+            "non-regular file".to_owned(),
+        ));
     }
 
     if !is_pdf_file(path)? {
@@ -320,19 +326,30 @@ pub fn open(path: &Path) -> Result<Box<dyn DocumentBackend>, ReaderError> {
 
 fn is_pdf_file(path: &Path) -> Result<bool, ReaderError> {
     let mut file = File::open(path)?;
-    let mut header = [0_u8; MAGIC_HEADER_SCAN_BYTES];
-    let bytes_read = file.read(&mut header)?;
+    if !file.metadata()?.is_file() {
+        return Ok(false);
+    }
 
     if has_pdf_extension(path) {
         return Ok(true);
     }
 
-    Ok(header[..bytes_read]
+    let mut header = [0_u8; MAGIC_HEADER_SCAN_BYTES];
+    let mut total_read = 0;
+    while total_read < header.len() {
+        let read_now = file.read(&mut header[total_read..])?;
+        if read_now == 0 {
+            break;
+        }
+        total_read += read_now;
+    }
+
+    Ok(header[..total_read]
         .windows(PDF_MAGIC.len())
         .any(|window| window == PDF_MAGIC))
 }
 
-fn has_pdf_extension(path: &Path) -> bool {
+pub(crate) fn has_pdf_extension(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
         .is_some_and(|ext| ext.eq_ignore_ascii_case("pdf"))
@@ -574,5 +591,40 @@ mod tests {
             matches!(err, ReaderError::UnsupportedFormat(ref label) if label == "folder"),
             "expected ReaderError::UnsupportedFormat(\"folder\"), got {err:?}"
         );
+    }
+
+    #[test]
+    fn open_rejects_html_file_with_embedded_pdf_magic_via_pdf_parser() {
+        let dir = TempDirGuard::new("html-polyglot");
+        let html = dir.write_file(
+            "polyglot.html",
+            b"<!-- %PDF-1.4 --><html><body>hi</body></html>",
+        );
+
+        let Err(err) = open(&html) else {
+            panic!("expected HTML polyglot to fail PDF parsing");
+        };
+
+        assert!(
+            matches!(err, ReaderError::InvalidDocument(_)),
+            "expected ReaderError::InvalidDocument, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn open_accepts_extensionless_valid_pdf_via_forced_pdf_handler() {
+        let dir = TempDirGuard::new("extensionless-pdf");
+        let pdf_bytes = concat!(
+            "%PDF-1.4\n",
+            "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+            "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+            "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>\nendobj\n",
+            "trailer\n<< /Size 4 /Root 1 0 R >>\n",
+            "startxref\n0\n%%EOF\n"
+        );
+        let extensionless = dir.write_file("document_without_ext", pdf_bytes.as_bytes());
+
+        let backend = open(&extensionless).expect("extensionless valid PDF should open");
+        assert_eq!(backend.page_count(), 1);
     }
 }

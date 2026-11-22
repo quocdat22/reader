@@ -24,3 +24,10 @@ dist-ssr
 *.sw?
 
 tests/fixtures
+
+# Secrets and local environment files
+.env
+.env.*
+*.pem
+*.key
+credentials.json
