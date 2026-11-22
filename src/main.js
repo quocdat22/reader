@@ -49,6 +49,10 @@ async function bootstrap() {
   let pendingSavePayload = null;
   /** @type {(() => void) | null} */
   let pendingNoticeAction = null;
+  /** @type {Set<number>} */
+  const closingTabIds = new Set();
+  /** @type {Set<string>} */
+  const inFlightOpenPaths = new Set();
 
   function showNotice(message, options = {}) {
     noticeMessageEl.textContent = message;
@@ -70,11 +74,21 @@ async function bootstrap() {
     noticeMessageEl.textContent = "";
   }
 
-  noticeDismissBtnEl.addEventListener("click", hideNotice);
+  noticeDismissBtnEl.addEventListener("click", () => {
+    const wasFocused = document.activeElement === noticeDismissBtnEl;
+    hideNotice();
+    if (wasFocused && tabManager.getActive()) {
+      viewport.focus();
+    }
+  });
   noticeActionBtnEl.addEventListener("click", () => {
+    const wasFocused = document.activeElement === noticeActionBtnEl;
     const action = pendingNoticeAction;
     hideNotice();
     action?.();
+    if (wasFocused && tabManager.getActive()) {
+      viewport.focus();
+    }
   });
 
   function scheduleSave(tab) {
@@ -271,7 +285,7 @@ async function bootstrap() {
     tabListEl: document.getElementById("tab-list"),
     addBtnEl: document.getElementById("tab-add-btn"),
     onSelectTab: (documentId) => {
-      void switchToTab(documentId);
+      switchToTab(documentId);
     },
     onCloseTab: (documentId) => {
       void handleCloseTab(documentId);
@@ -300,7 +314,7 @@ async function bootstrap() {
     },
   });
 
-  async function switchToTab(documentId) {
+  function switchToTab(documentId) {
     const current = tabManager.getActive();
     if (current && current.documentId === documentId) {
       return;
@@ -314,7 +328,7 @@ async function bootstrap() {
       if (snap) {
         scheduleSave(current);
       }
-      await flushPendingSave();
+      void flushPendingSave();
     }
 
     const next = tabManager.setActive(documentId);
@@ -330,12 +344,19 @@ async function bootstrap() {
   }
 
   async function handleOpenPath(path, options = {}) {
-    if (typeof path !== "string" || path.trim().length === 0) {
-      return;
+    if (typeof path !== "string") {
+      return { ok: false, error: null };
+    }
+    const trimmed = path.trim();
+    if (trimmed.length === 0 || inFlightOpenPaths.has(trimmed)) {
+      return { ok: false, error: null };
     }
 
-    hideNotice();
+    if (options.clearExistingError !== false) {
+      hideNotice();
+    }
 
+    inFlightOpenPaths.add(trimmed);
     try {
       const response = await openDocument(path);
       const existingActive = tabManager.getActive();
@@ -345,7 +366,7 @@ async function bootstrap() {
         toc.captureScroll(existingActive);
         viewport.captureActiveSnapshot();
         scheduleSave(existingActive);
-        await flushPendingSave();
+        void flushPendingSave();
       }
 
       const tab = tabManager.upsertFromOpenResponse(response);
@@ -363,6 +384,7 @@ async function bootstrap() {
 
       viewport.focus();
       void refreshRecents();
+      return { ok: true, error: null };
     } catch (err) {
       const formatted = formatOpenError(err, options);
       const actionOptions = formatted.canRemoveRecent
@@ -379,15 +401,38 @@ async function bootstrap() {
       } else {
         showNotice(formatted.message, actionOptions);
       }
+      return { ok: false, error: { message: formatted.message, actionOptions } };
+    } finally {
+      inFlightOpenPaths.delete(trimmed);
+    }
+  }
+
+  async function openPathBatch(paths) {
+    if (!Array.isArray(paths) || paths.length === 0) {
+      return;
+    }
+    hideNotice();
+    emptyState.clearError();
+
+    /** @type {{ message: string, actionOptions: any } | null} */
+    let lastError = null;
+    for (const path of paths) {
+      const result = await handleOpenPath(path, { clearExistingError: false });
+      if (!result.ok && result.error) {
+        lastError = result.error;
+      }
+    }
+
+    // Preserve batch error feedback if a later valid file transitioned out of the empty state.
+    if (lastError && !tabManager.isEmpty()) {
+      showNotice(lastError.message, lastError.actionOptions);
     }
   }
 
   async function handleOpenViaDialog() {
     try {
       const paths = await pickPdfFiles();
-      for (const path of paths) {
-        await handleOpenPath(path);
-      }
+      await openPathBatch(paths);
     } catch (err) {
       const formatted = formatOpenError(err);
       if (tabManager.isEmpty()) {
@@ -399,10 +444,14 @@ async function bootstrap() {
   }
 
   async function handleCloseTab(documentId) {
+    if (closingTabIds.has(documentId)) {
+      return;
+    }
     const target = tabManager.getById(documentId);
     if (!target) {
       return;
     }
+    closingTabIds.add(documentId);
 
     const active = tabManager.getActive();
     const closingActive = active && active.documentId === documentId;
@@ -411,30 +460,24 @@ async function bootstrap() {
       toolbar.cancelPageInput();
       toc.captureScroll(target);
       viewport.captureActiveSnapshot();
-      scheduleSave(target);
-      await flushPendingSave();
-      viewport.unmount();
-    } else {
-      try {
-        await saveReadingState({
-          path: target.canonicalPath,
-          pageIndex: target.pageIndex,
-          zoomMode: target.zoomMode,
-          zoomScale: target.zoomScale,
-        });
-      } catch (err) {
-        console.error("Failed to save background tab reading state:", err);
+      if (pendingSavePayload?.path === target.canonicalPath) {
+        if (saveTimer !== null) {
+          clearTimeout(saveTimer);
+          saveTimer = null;
+        }
+        pendingSavePayload = null;
       }
+      viewport.unmount();
     }
+
+    const snapshot = {
+      path: target.canonicalPath,
+      pageIndex: target.pageIndex,
+      zoomMode: target.zoomMode,
+      zoomScale: target.zoomScale,
+    };
 
     const { nextActive } = tabManager.remove(documentId);
-
-    try {
-      await closeDocument(documentId);
-    } catch (err) {
-      console.error(`Failed to close document ${documentId}:`, err);
-    }
-
     updateShellMode();
 
     if (closingActive && nextActive) {
@@ -445,7 +488,26 @@ async function bootstrap() {
     } else if (tabManager.isEmpty()) {
       toc.clear();
       search.clear();
-      await refreshRecents();
+    }
+
+    try {
+      try {
+        await saveReadingState(snapshot);
+      } catch (err) {
+        console.error("Failed to save reading state on close:", err);
+      }
+
+      try {
+        await closeDocument(documentId);
+      } catch (err) {
+        console.error(`Failed to close document ${documentId}:`, err);
+      }
+
+      if (tabManager.isEmpty()) {
+        await refreshRecents();
+      }
+    } finally {
+      closingTabIds.delete(documentId);
     }
   }
 
@@ -476,13 +538,13 @@ async function bootstrap() {
     onSwitchAdjacentTab: (delta) => {
       const nextId = tabManager.getAdjacentDocumentId(delta);
       if (nextId !== null) {
-        void switchToTab(nextId);
+        switchToTab(nextId);
       }
     },
     onJumpToTabNumber: (digit) => {
       const targetId = tabManager.getDocumentIdAtShortcutIndex(digit);
       if (targetId !== null) {
-        void switchToTab(targetId);
+        switchToTab(targetId);
       }
     },
     onOpenSearch: () => {
@@ -570,11 +632,7 @@ async function bootstrap() {
       },
       onDrop: (paths) => {
         dropOverlayEl.hidden = true;
-        void (async () => {
-          for (const path of paths) {
-            await handleOpenPath(path);
-          }
-        })();
+        void openPathBatch(paths);
       },
     });
   } catch (err) {

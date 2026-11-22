@@ -301,6 +301,10 @@ pub fn normalize_top_left_rect_in_box(
 /// - Returns [`ReaderError::PasswordProtected`] or [`ReaderError::InvalidDocument`]
 ///   if the backend fails to open the file.
 pub fn open(path: &Path) -> Result<Box<dyn DocumentBackend>, ReaderError> {
+    if std::fs::metadata(path)?.is_dir() {
+        return Err(ReaderError::UnsupportedFormat("folder".to_owned()));
+    }
+
     if !is_pdf_file(path)? {
         let label = path
             .extension()
@@ -555,6 +559,20 @@ mod tests {
         assert!(
             matches!(err, ReaderError::InvalidDocument(_)),
             "expected ReaderError::InvalidDocument, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn open_returns_unsupported_format_for_directory() {
+        let dir = TempDirGuard::new("directory");
+
+        let Err(err) = open(&dir.path) else {
+            panic!("expected directory open to fail");
+        };
+
+        assert!(
+            matches!(err, ReaderError::UnsupportedFormat(ref label) if label == "folder"),
+            "expected ReaderError::UnsupportedFormat(\"folder\"), got {err:?}"
         );
     }
 }

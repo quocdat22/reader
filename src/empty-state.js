@@ -107,13 +107,21 @@ export function createEmptyState({
   });
 
   errorDismissBtnEl.addEventListener("click", () => {
+    const wasFocused = document.activeElement === errorDismissBtnEl;
     clearError();
+    if (wasFocused) {
+      openBtnEl.focus();
+    }
   });
 
   errorActionBtnEl.addEventListener("click", () => {
+    const wasFocused = document.activeElement === errorActionBtnEl;
     const action = pendingErrorAction;
     clearError();
     action?.();
+    if (wasFocused) {
+      openBtnEl.focus();
+    }
   });
 
   /**

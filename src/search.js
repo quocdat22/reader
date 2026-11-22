@@ -276,7 +276,7 @@ export function createSearchController({
       inputEl.value = state.query;
     }
 
-    countEl.classList.remove("search-count--empty", "search-count--error");
+    countEl.classList.remove("search-count--error");
     countEl.removeAttribute("aria-label");
 
     if (state.query.trim().length === 0) {
@@ -292,7 +292,6 @@ export function createSearchController({
       } else {
         countEl.textContent = "0 / 0";
         countEl.setAttribute("aria-label", "No matches");
-        countEl.classList.add("search-count--empty");
       }
     } else {
       countEl.textContent = "";

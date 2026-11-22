@@ -404,6 +404,13 @@ export function createViewport({ viewportEl, trackEl, textLayer, onViewStateChan
             return;
           }
 
+          const { firstVisible, lastVisible } = getVisibleRange();
+          const keepMin = Math.max(0, firstVisible - EVICT_RADIUS);
+          const keepMax = Math.min(pageOffsets.length - 1, lastVisible + EVICT_RADIUS);
+          if (pageIndex < keepMin || pageIndex > keepMax) {
+            return;
+          }
+
           const targetSlot = slotElements[pageIndex];
           if (!targetSlot) {
             return;

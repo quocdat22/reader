@@ -607,4 +607,35 @@ mod tests {
 
         assert_eq!(spans, Vec::<TextSpan>::new());
     }
+
+    #[test]
+    fn open_returns_password_protected_for_encrypted_pdf() {
+        let dir =
+            std::env::temp_dir().join(format!("reader-encrypted-pdf-test-{}", std::process::id()));
+        fs::create_dir_all(&dir).expect("create temp dir");
+        let pdf_path = dir.join("locked.pdf");
+
+        // Minimal PDF 1.4 with Standard R=2 encryption dictionary whose empty-password hash mismatches.
+        let pdf_bytes = concat!(
+            "%PDF-1.4\n",
+            "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+            "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+            "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>\nendobj\n",
+            "4 0 obj\n<< /Filter /Standard /V 1 /R 2 /Length 40 /P -4 ",
+            "/O <0000000000000000000000000000000000000000000000000000000000000000> ",
+            "/U <0000000000000000000000000000000000000000000000000000000000000000> >>\nendobj\n",
+            "trailer\n<< /Size 5 /Root 1 0 R /Encrypt 4 0 R /ID [<0123456789ABCDEF> <0123456789ABCDEF>] >>\n",
+            "startxref\n0\n%%EOF\n"
+        );
+        fs::write(&pdf_path, pdf_bytes.as_bytes()).expect("write encrypted pdf");
+
+        let result = PdfBackend::open(&pdf_path);
+        let _ = fs::remove_dir_all(&dir);
+
+        assert!(
+            matches!(result, Err(ReaderError::PasswordProtected)),
+            "expected PasswordProtected, got {:?}",
+            result.err()
+        );
+    }
 }

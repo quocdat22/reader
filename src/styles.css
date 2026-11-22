@@ -968,10 +968,6 @@ input:focus-visible,
   white-space: nowrap;
 }
 
-.search-count--empty {
-  color: var(--ink-muted);
-}
-
 .search-count--error {
   color: var(--error-ink);
 }
