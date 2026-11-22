@@ -2,38 +2,234 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="stylesheet" href="styles.css" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Tauri App</title>
-    <script type="module" src="/main.js" defer></script>
+    <title>Reader</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script type="module" src="/main.js"></script>
   </head>
 
   <body>
-    <main class="container">
-      <h1>Welcome to Tauri</h1>
+    <div id="app" class="app">
+      <header id="app-chrome" class="chrome" hidden>
+        <div id="tab-strip" class="tab-strip">
+          <div
+            id="tab-list"
+            class="tab-list"
+            role="tablist"
+            aria-label="Open documents"
+          ></div>
+          <button
+            id="tab-add-btn"
+            class="tab-add-btn"
+            type="button"
+            title="Open PDF (Ctrl+O)"
+            aria-label="Open another PDF"
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M8 3.25v9.5M3.25 8h9.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+            </svg>
+          </button>
+        </div>
 
-      <div class="row">
-        <a href="https://tauri.app" target="_blank">
-          <img src="/assets/tauri.svg" class="logo tauri" alt="Tauri logo" />
-        </a>
-        <a
-          href="https://developer.mozilla.org/en-US/docs/Web/JavaScript"
-          target="_blank"
-        >
-          <img
-            src="/assets/javascript.svg"
-            class="logo vanilla"
-            alt="JavaScript logo"
-          />
-        </a>
+        <div id="toolbar" class="toolbar" role="toolbar" aria-label="Document controls">
+          <div class="toolbar-group toolbar-group--left">
+            <button
+              id="toc-toggle-btn"
+              class="icon-btn"
+              type="button"
+              title="Outline"
+              aria-label="Toggle outline"
+              aria-pressed="false"
+              disabled
+            >
+              <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path d="M2.5 3.5h11M2.5 8h7.5M2.5 12.5h9.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+              </svg>
+            </button>
+          </div>
+
+          <div class="toolbar-group toolbar-group--center">
+            <label class="sr-only" for="page-input">Page number</label>
+            <div class="page-control">
+              <input
+                id="page-input"
+                class="page-input"
+                type="text"
+                inputmode="numeric"
+                autocomplete="off"
+                spellcheck="false"
+                aria-label="Current page"
+              />
+              <span class="page-divider" aria-hidden="true">/</span>
+              <span id="page-total" class="page-total">0</span>
+            </div>
+          </div>
+
+          <div class="toolbar-group toolbar-group--right">
+            <div class="zoom-control" role="group" aria-label="Zoom">
+              <button
+                id="zoom-out-btn"
+                class="icon-btn"
+                type="button"
+                title="Zoom out"
+                aria-label="Zoom out"
+              >
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <path d="M3.5 8h9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+                </svg>
+              </button>
+              <span id="zoom-value" class="zoom-value" aria-live="off">100%</span>
+              <button
+                id="zoom-in-btn"
+                class="icon-btn"
+                type="button"
+                title="Zoom in"
+                aria-label="Zoom in"
+              >
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <path d="M8 3.5v9M3.5 8h9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+                </svg>
+              </button>
+            </div>
+
+            <span class="toolbar-sep" aria-hidden="true"></span>
+
+            <div class="fit-control" role="group" aria-label="Fit mode">
+              <button
+                id="fit-width-btn"
+                class="toolbar-btn"
+                type="button"
+                title="Fit width"
+                aria-label="Fit width"
+                aria-pressed="false"
+              >
+                <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <path d="M2.5 3v10M13.5 3v10M5.5 8h5M5.5 8l1.75-1.75M5.5 8l1.75 1.75M10.5 8L8.75 6.25M10.5 8L8.75 9.75" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+                <span class="toolbar-btn-label">Fit width</span>
+              </button>
+              <button
+                id="fit-page-btn"
+                class="toolbar-btn"
+                type="button"
+                title="Fit page"
+                aria-label="Fit page"
+                aria-pressed="false"
+              >
+                <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <rect x="3" y="2.5" width="10" height="11" rx="1.2" stroke="currentColor" stroke-width="1.4" />
+                  <path d="M5.5 6.5V5h1.5M10.5 9.5V11H9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+                <span class="toolbar-btn-label">Fit page</span>
+              </button>
+            </div>
+
+            <span class="toolbar-sep" aria-hidden="true"></span>
+
+            <button
+              id="search-toggle-btn"
+              class="icon-btn"
+              type="button"
+              title="Find in document"
+              aria-label="Find in document"
+              aria-pressed="false"
+              disabled
+            >
+              <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <circle cx="7.2" cy="7.2" r="4.4" stroke="currentColor" stroke-width="1.5" />
+                <path d="M10.6 10.6L13.5 13.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+              </svg>
+            </button>
+
+            <button
+              id="open-btn"
+              class="toolbar-btn toolbar-btn--open"
+              type="button"
+              title="Open PDF (Ctrl+O)"
+              aria-label="Open PDF"
+            >
+              <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path d="M2.25 4.75A1.25 1.25 0 013.5 3.5h2.6l1.3 1.4h5.1a1.25 1.25 0 011.25 1.25v5.6A1.25 1.25 0 0112.5 13h-9a1.25 1.25 0 01-1.25-1.25v-7z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" />
+              </svg>
+              <span class="toolbar-btn-label">Open</span>
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <div id="notice-banner" class="notice-banner" role="alert" hidden>
+        <span id="notice-message" class="notice-message"></span>
+        <div class="notice-actions">
+          <button id="notice-action-btn" class="notice-action-btn" type="button" hidden></button>
+          <button
+            id="notice-dismiss-btn"
+            class="notice-dismiss-btn"
+            type="button"
+            aria-label="Dismiss message"
+          >
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+              <path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+            </svg>
+          </button>
+        </div>
       </div>
-      <p>Click on the Tauri logo to learn more about the framework</p>
 
-      <form class="row" id="greet-form">
-        <input id="greet-input" placeholder="Enter a name..." />
-        <button type="submit">Greet</button>
-      </form>
-      <p id="greet-msg"></p>
-    </main>
+      <main id="workspace" class="workspace">
+        <section id="empty-state" class="empty-state" aria-label="Open a document">
+          <div class="empty-inner">
+            <header class="empty-header">
+              <h1 class="empty-title">Reader</h1>
+              <p class="empty-hint">Drop a PDF anywhere, or press Ctrl+O.</p>
+              <div class="empty-cta-row">
+                <button id="empty-open-btn" class="primary-btn" type="button">Open PDF</button>
+              </div>
+            </header>
+
+            <div id="empty-error" class="inline-error" role="alert" hidden>
+              <span id="empty-error-message" class="inline-error-message"></span>
+              <div class="inline-error-actions">
+                <button id="empty-error-action" class="inline-error-action" type="button" hidden></button>
+                <button
+                  id="empty-error-dismiss"
+                  class="inline-error-dismiss"
+                  type="button"
+                  aria-label="Dismiss error"
+                >
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                    <path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            <section id="recent-section" class="recent-section" aria-labelledby="recent-heading" hidden>
+              <h2 id="recent-heading" class="recent-heading">Recent</h2>
+              <ul id="recent-list" class="recent-list"></ul>
+            </section>
+          </div>
+        </section>
+
+        <div id="reader-shell" class="reader-shell" hidden>
+          <aside id="toc-drawer" class="toc-drawer" aria-label="Table of contents" hidden></aside>
+          <div class="viewport-host">
+            <div id="search-bar" class="search-bar" hidden></div>
+            <div
+              id="viewport"
+              class="viewport"
+              tabindex="0"
+              aria-label="Document pages"
+            >
+              <div id="viewport-track" class="viewport-track"></div>
+            </div>
+          </div>
+        </div>
+      </main>
+
+      <div id="drop-overlay" class="drop-overlay" aria-hidden="true" hidden>
+        <div class="drop-overlay-frame">
+          <span class="drop-overlay-label">Drop PDF to open</span>
+        </div>
+      </div>
+    </div>
   </body>
 </html>

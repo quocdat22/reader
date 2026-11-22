@@ -1,18 +1,447 @@
-const { invoke } = window.__TAURI__.core;
+/**
+ * Application bootstrap, multi-tab coordination, drag-drop, and reading-state persistence.
+ */
 
-let greetInputEl;
-let greetMsgEl;
+import {
+  closeDocument,
+  getInitialFile,
+  getPersistedState,
+  openDocument,
+  pickPdfFiles,
+  removeRecentFile,
+  saveReadingState,
+  subscribeDragDrop,
+} from "./api.js";
+import { createEmptyState, formatOpenError } from "./empty-state.js";
+import { createTabManager } from "./tabs.js";
+import { createToolbar, getNextZoomStep } from "./toolbar.js";
+import { createViewport } from "./viewport.js";
 
-async function greet() {
-  // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-  greetMsgEl.textContent = await invoke("greet", { name: greetInputEl.value });
-}
+const SAVE_DEBOUNCE_MS = 400;
 
-window.addEventListener("DOMContentLoaded", () => {
-  greetInputEl = document.querySelector("#greet-input");
-  greetMsgEl = document.querySelector("#greet-msg");
-  document.querySelector("#greet-form").addEventListener("submit", (e) => {
-    e.preventDefault();
-    greet();
-  });
+document.addEventListener("DOMContentLoaded", () => {
+  void bootstrap();
 });
+
+async function bootstrap() {
+  const appChromeEl = document.getElementById("app-chrome");
+  const emptyStateEl = document.getElementById("empty-state");
+  const readerShellEl = document.getElementById("reader-shell");
+  const dropOverlayEl = document.getElementById("drop-overlay");
+
+  const noticeBannerEl = document.getElementById("notice-banner");
+  const noticeMessageEl = document.getElementById("notice-message");
+  const noticeActionBtnEl = document.getElementById("notice-action-btn");
+  const noticeDismissBtnEl = document.getElementById("notice-dismiss-btn");
+
+  const viewportEl = document.getElementById("viewport");
+  const viewportTrackEl = document.getElementById("viewport-track");
+
+  /** @type {ReturnType<typeof setTimeout> | null} */
+  let saveTimer = null;
+  /** @type {{ path: string, pageIndex: number, zoomMode: "fit_width" | "fit_page" | "custom", zoomScale: number } | null} */
+  let pendingSavePayload = null;
+  /** @type {(() => void) | null} */
+  let pendingNoticeAction = null;
+
+  function showNotice(message, options = {}) {
+    noticeMessageEl.textContent = message;
+    if (options.actionLabel && typeof options.onAction === "function") {
+      pendingNoticeAction = options.onAction;
+      noticeActionBtnEl.textContent = options.actionLabel;
+      noticeActionBtnEl.hidden = false;
+    } else {
+      pendingNoticeAction = null;
+      noticeActionBtnEl.hidden = true;
+    }
+    noticeBannerEl.hidden = false;
+  }
+
+  function hideNotice() {
+    pendingNoticeAction = null;
+    noticeActionBtnEl.hidden = true;
+    noticeBannerEl.hidden = true;
+    noticeMessageEl.textContent = "";
+  }
+
+  noticeDismissBtnEl.addEventListener("click", hideNotice);
+  noticeActionBtnEl.addEventListener("click", () => {
+    const action = pendingNoticeAction;
+    hideNotice();
+    action?.();
+  });
+
+  function scheduleSave(tab) {
+    if (!tab) {
+      return;
+    }
+    pendingSavePayload = {
+      path: tab.canonicalPath,
+      pageIndex: tab.pageIndex,
+      zoomMode: tab.zoomMode,
+      zoomScale: tab.zoomScale,
+    };
+
+    if (saveTimer !== null) {
+      clearTimeout(saveTimer);
+    }
+    saveTimer = setTimeout(() => {
+      saveTimer = null;
+      void flushPendingSave();
+    }, SAVE_DEBOUNCE_MS);
+  }
+
+  async function flushPendingSave() {
+    if (saveTimer !== null) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+    }
+    const payload = pendingSavePayload;
+    pendingSavePayload = null;
+    if (!payload) {
+      return;
+    }
+    try {
+      await saveReadingState(payload);
+    } catch (err) {
+      console.error("Failed to save reading state:", err);
+    }
+  }
+
+  async function refreshRecents() {
+    try {
+      const persisted = await getPersistedState();
+      emptyState.renderRecents(persisted.recent_files);
+    } catch (err) {
+      console.error("Failed to load persisted state:", err);
+    }
+  }
+
+  function updateShellMode() {
+    const hasOpenTabs = !tabManager.isEmpty();
+    appChromeEl.hidden = !hasOpenTabs;
+    readerShellEl.hidden = !hasOpenTabs;
+    emptyStateEl.hidden = hasOpenTabs;
+
+    if (hasOpenTabs) {
+      emptyState.clearError();
+      const active = tabManager.getActive();
+      document.title = active ? `${active.title} — Reader` : "Reader";
+    } else {
+      hideNotice();
+      document.title = "Reader";
+    }
+  }
+
+  const toolbar = createToolbar({
+    pageInputEl: document.getElementById("page-input"),
+    pageTotalEl: document.getElementById("page-total"),
+    zoomOutBtnEl: document.getElementById("zoom-out-btn"),
+    zoomValueEl: document.getElementById("zoom-value"),
+    zoomInBtnEl: document.getElementById("zoom-in-btn"),
+    fitWidthBtnEl: document.getElementById("fit-width-btn"),
+    fitPageBtnEl: document.getElementById("fit-page-btn"),
+    openBtnEl: document.getElementById("open-btn"),
+    tocToggleBtnEl: document.getElementById("toc-toggle-btn"),
+    searchToggleBtnEl: document.getElementById("search-toggle-btn"),
+    onJumpToPage: (pageIndex) => {
+      viewport.scrollToPage(pageIndex);
+    },
+    onStepZoom: (direction) => {
+      const active = tabManager.getActive();
+      if (!active) {
+        return;
+      }
+      viewport.setCustomZoom(getNextZoomStep(active.zoomScale, direction));
+    },
+    onSetZoomMode: (mode) => {
+      viewport.setZoomMode(mode);
+    },
+    onOpenNew: () => {
+      void handleOpenViaDialog();
+    },
+  });
+
+  const viewport = createViewport({
+    viewportEl,
+    trackEl: viewportTrackEl,
+    onViewStateChange: (snapshot) => {
+      const active = tabManager.getActive();
+      if (!active || active.documentId !== snapshot.documentId) {
+        return;
+      }
+      toolbar.sync({
+        pageIndex: active.pageIndex,
+        pageCount: active.pageCount,
+        zoomMode: active.zoomMode,
+        zoomScale: active.zoomScale,
+        tocOpen: active.tocOpen,
+      });
+      scheduleSave(active);
+    },
+  });
+
+  const tabManager = createTabManager({
+    tabListEl: document.getElementById("tab-list"),
+    addBtnEl: document.getElementById("tab-add-btn"),
+    onSelectTab: (documentId) => {
+      void switchToTab(documentId);
+    },
+    onCloseTab: (documentId) => {
+      void handleCloseTab(documentId);
+    },
+    onOpenNew: () => {
+      void handleOpenViaDialog();
+    },
+  });
+
+  const emptyState = createEmptyState({
+    openBtnEl: document.getElementById("empty-open-btn"),
+    errorBoxEl: document.getElementById("empty-error"),
+    errorMsgEl: document.getElementById("empty-error-message"),
+    errorActionBtnEl: document.getElementById("empty-error-action"),
+    errorDismissBtnEl: document.getElementById("empty-error-dismiss"),
+    recentSectionEl: document.getElementById("recent-section"),
+    recentListEl: document.getElementById("recent-list"),
+    onOpenDialog: () => {
+      void handleOpenViaDialog();
+    },
+    onOpenRecent: (path) => {
+      void handleOpenPath(path, { fromRecent: true });
+    },
+    onRemoveRecent: (path) => {
+      void handleRemoveRecent(path);
+    },
+  });
+
+  async function switchToTab(documentId) {
+    const current = tabManager.getActive();
+    if (current && current.documentId === documentId) {
+      return;
+    }
+
+    if (current) {
+      const snap = viewport.captureActiveSnapshot();
+      if (snap) {
+        scheduleSave(current);
+      }
+      await flushPendingSave();
+    }
+
+    const next = tabManager.setActive(documentId);
+    if (!next) {
+      return;
+    }
+
+    updateShellMode();
+    viewport.mountTab(next);
+    viewportEl.focus({ preventScroll: true });
+  }
+
+  async function handleOpenPath(path, options = {}) {
+    if (typeof path !== "string" || path.trim().length === 0) {
+      return;
+    }
+
+    hideNotice();
+
+    try {
+      const response = await openDocument(path);
+      const existingActive = tabManager.getActive();
+
+      if (existingActive && existingActive.documentId !== response.document_id) {
+        viewport.captureActiveSnapshot();
+        scheduleSave(existingActive);
+        await flushPendingSave();
+      }
+
+      const tab = tabManager.upsertFromOpenResponse(response);
+      const wasSameActive =
+        existingActive && existingActive.documentId === tab.documentId;
+
+      tabManager.setActive(tab.documentId);
+      updateShellMode();
+
+      if (!wasSameActive) {
+        viewport.mountTab(tab);
+      }
+
+      viewportEl.focus({ preventScroll: true });
+      void refreshRecents();
+    } catch (err) {
+      const formatted = formatOpenError(err, options);
+      const actionOptions = formatted.canRemoveRecent
+        ? {
+            actionLabel: "Remove from recent",
+            onAction: () => {
+              void handleRemoveRecent(path);
+            },
+          }
+        : {};
+
+      if (tabManager.isEmpty()) {
+        emptyState.showError(formatted.message, actionOptions);
+      } else {
+        showNotice(formatted.message, actionOptions);
+      }
+    }
+  }
+
+  async function handleOpenViaDialog() {
+    try {
+      const paths = await pickPdfFiles();
+      for (const path of paths) {
+        await handleOpenPath(path);
+      }
+    } catch (err) {
+      const formatted = formatOpenError(err);
+      if (tabManager.isEmpty()) {
+        emptyState.showError(formatted.message);
+      } else {
+        showNotice(formatted.message);
+      }
+    }
+  }
+
+  async function handleCloseTab(documentId) {
+    const target = tabManager.getById(documentId);
+    if (!target) {
+      return;
+    }
+
+    const active = tabManager.getActive();
+    const closingActive = active && active.documentId === documentId;
+
+    if (closingActive) {
+      viewport.captureActiveSnapshot();
+      scheduleSave(target);
+      await flushPendingSave();
+      viewport.unmount();
+    } else {
+      try {
+        await saveReadingState({
+          path: target.canonicalPath,
+          pageIndex: target.pageIndex,
+          zoomMode: target.zoomMode,
+          zoomScale: target.zoomScale,
+        });
+      } catch (err) {
+        console.error("Failed to save background tab reading state:", err);
+      }
+    }
+
+    const { nextActive } = tabManager.remove(documentId);
+
+    try {
+      await closeDocument(documentId);
+    } catch (err) {
+      console.error(`Failed to close document ${documentId}:`, err);
+    }
+
+    updateShellMode();
+
+    if (closingActive && nextActive) {
+      viewport.mountTab(nextActive);
+      viewportEl.focus({ preventScroll: true });
+    }
+
+    if (tabManager.isEmpty()) {
+      await refreshRecents();
+    }
+  }
+
+  async function handleRemoveRecent(path) {
+    try {
+      const updated = await removeRecentFile(path);
+      emptyState.renderRecents(updated.recent_files);
+    } catch (err) {
+      console.error("Failed to remove recent file:", err);
+    }
+  }
+
+  // Phase 3 baseline desktop interactions (full shortcut router arrives in Phase 4).
+  window.addEventListener("keydown", (event) => {
+    const modifier = event.ctrlKey || event.metaKey;
+    if (!modifier || event.altKey) {
+      return;
+    }
+
+    const key = event.key.toLowerCase();
+    if (key === "o") {
+      event.preventDefault();
+      void handleOpenViaDialog();
+    } else if (key === "w") {
+      const active = tabManager.getActive();
+      if (active) {
+        event.preventDefault();
+        void handleCloseTab(active.documentId);
+      }
+    }
+  });
+
+  viewportEl.addEventListener(
+    "wheel",
+    (event) => {
+      if (!(event.ctrlKey || event.metaKey)) {
+        return;
+      }
+      const active = tabManager.getActive();
+      if (!active) {
+        return;
+      }
+      event.preventDefault();
+      const direction = event.deltaY < 0 ? 1 : -1;
+      viewport.setCustomZoom(getNextZoomStep(active.zoomScale, direction));
+    },
+    { passive: false },
+  );
+
+  window.addEventListener("beforeunload", () => {
+    const active = tabManager.getActive();
+    if (active) {
+      viewport.captureActiveSnapshot();
+      pendingSavePayload = {
+        path: active.canonicalPath,
+        pageIndex: active.pageIndex,
+        zoomMode: active.zoomMode,
+        zoomScale: active.zoomScale,
+      };
+      void flushPendingSave();
+    }
+  });
+
+  // Subscribe to native Tauri window file drag-and-drop events.
+  try {
+    await subscribeDragDrop({
+      onEnter: () => {
+        dropOverlayEl.hidden = false;
+      },
+      onLeave: () => {
+        dropOverlayEl.hidden = true;
+      },
+      onDrop: (paths) => {
+        dropOverlayEl.hidden = true;
+        void (async () => {
+          for (const path of paths) {
+            await handleOpenPath(path);
+          }
+        })();
+      },
+    });
+  } catch (err) {
+    console.error("Failed to subscribe to drag-drop events:", err);
+  }
+
+  // Initial startup load: persisted recents + optional CLI / "Open With" file.
+  await refreshRecents();
+  updateShellMode();
+
+  try {
+    const initialFile = await getInitialFile();
+    if (initialFile) {
+      await handleOpenPath(initialFile);
+    }
+  } catch (err) {
+    console.error("Failed to consume initial file:", err);
+  }
+}
