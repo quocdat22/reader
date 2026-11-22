@@ -238,7 +238,7 @@ async fn worker_opens_deduplicates_renders_and_closes_fixture() {
         return;
     };
 
-    let worker = DocumentWorker::spawn(None).expect("worker should spawn");
+    let worker = DocumentWorker::spawn().expect("worker should spawn");
 
     let first = worker
         .open_document(fixture.clone())

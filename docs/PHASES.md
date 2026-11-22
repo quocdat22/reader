@@ -4,22 +4,21 @@ Execute phases sequentially. Complete every item in a phase's **Exit Gate** befo
 
 ---
 
-## Phase 0: Foundation, Tooling & PDFium Provisioning
+## Phase 0: Foundation, Tooling & MuPDF Build Setup
 
-- **Goal**: Establish lint hygiene, automated PDFium binary fetching, Tauri dialog/resource configuration, and generic fixture discovery.
+- **Goal**: Establish lint hygiene, statically linked MuPDF configuration, Tauri dialog/window configuration, and generic fixture discovery.
 - **Skills**: `rust-best-practices` (Chapter 2 — Clippy and Linting).
 - **Tasks**:
-  1. Update `.gitignore` to ignore `src-tauri/resources/pdfium/` (keep `tests/fixtures` ignored).
+  1. Ensure `.gitignore` keeps `tests/fixtures` ignored.
   2. Add `[lints.rust]` and `[lints.clippy]` in `src-tauri/Cargo.toml` enforcing clean warnings, `redundant_clone`, `large_enum_variant`, `needless_collect`, and missing-doc discipline on public library APIs.
-  3. Add dependencies to `src-tauri/Cargo.toml`: `pdfium-render`, `thiserror`, `tauri-plugin-dialog`, and `tokio` (only needed features, e.g., `sync`).
-  4. Create `scripts/fetch-pdfium.ps1` to download and extract a pinned Windows x64 `pdfium.dll` release from `bblanchon/pdfium-binaries` into `src-tauri/resources/pdfium/pdfium.dll` (idempotent if already present).
-  5. Configure `src-tauri/tauri.conf.json`: reasonable default window size (`1100x800`, min `640x480`), clean title `"Reader"`, and `bundle.resources` mapping `resources/pdfium/*`.
+  3. Add dependencies to `src-tauri/Cargo.toml`: `mupdf` (`0.8`, `AGPL-3.0`, `default-features = false`, `features = ["base14-fonts", "system-fonts", "bundled-fonts-noto"]`), `thiserror`, `tauri-plugin-dialog`, and `tokio` (only needed features, e.g., `sync`).
+  4. Verify Windows x64 build prerequisites: Visual Studio C++ Build Tools (`MSBuild`) and LLVM (`libclang` for `bindgen`).
+  5. Configure `src-tauri/tauri.conf.json`: reasonable default window size (`1100x800`, min `640x480`), clean title `"Reader"`, and standalone executable bundling (no external PDF DLLs).
   6. Update `src-tauri/capabilities/default.json` to grant minimal required permissions (`core:default`, `dialog:allow-open`, drag-drop support).
   7. Create `src-tauri/tests/common/mod.rs` with dynamic fixture resolver (`READER_TEST_PDF` -> first `*.pdf` in `tests/fixtures/` -> `None`). Never reference specific filenames.
 - **Exit Gate**:
-  - `powershell -File scripts/fetch-pdfium.ps1` places `pdfium.dll` in `src-tauri/resources/pdfium/`.
   - `cargo check`, `cargo fmt --check`, and `cargo clippy --all-targets --all-features --locked -- -D warnings` pass.
-  - `git status --short` shows neither `tests/fixtures/` nor `src-tauri/resources/pdfium/` as tracked/untracked.
+  - `git status --short` shows `tests/fixtures/` remains untracked/ignored.
 
 ---
 
@@ -29,11 +28,10 @@ Execute phases sequentially. Complete every item in a phase's **Exit Gate** befo
 - **Skills**: `rust-best-practices` (Chapters 1, 4, 5, 6, 8, 9).
 - **Tasks**:
   1. Implement `src-tauri/src/error.rs`: `ReaderError` with `thiserror` and serializable error payload (`code`, `message`). Zero `.unwrap()`/`.expect()` in production code.
-  2. Implement `src-tauri/src/backend/mod.rs`: `DocumentBackend` trait, DTOs (`DocumentMetadata`, `PageDimensions`, `RenderedPage`, `OutlineItem`, `TextSpan`, `SearchMatch`, `NormalizedRect`), coordinate conversion helper (PDF bottom-left points -> top-left `[0.0, 1.0]`), and format factory `open()`.
+  2. Implement `src-tauri/src/backend/mod.rs`: `DocumentBackend` trait, DTOs (`DocumentMetadata`, `PageDimensions`, `RenderedPage`, `OutlineItem`, `TextSpan`, `SearchMatch`, `NormalizedRect`), coordinate conversion helper (top-left page points -> top-left `[0.0, 1.0]`), and format factory `open()`.
   3. Implement `src-tauri/src/backend/pdf.rs`:
-     - Cross-platform-clean dynamic PDFium loader (`PDFIUM_LIB_PATH` -> resource dir -> exe dir -> dev `resources/pdfium/`).
-     - `PdfBackend` implementing `DocumentBackend`: page dimensions, clamped RGBA8 rasterization (`<= 4096px` per side), recursive outline extraction, page text span extraction with normalized rects, case-insensitive document search returning normalized match rects.
-  4. Implement `src-tauri/src/worker.rs`: dedicated `doc-worker` OS thread owning `Pdfium` and a `HashMap<u64, Box<dyn DocumentBackend>>` for open tabs (with canonical-path deduplication), async request/response channel bridge (`tokio::sync::oneshot`), monotonic `document_id`, per-document close cleanup, and `render_epoch` cancellation for stale scroll/zoom/tab-switch renders.
+     - Statically linked `MuPDF` `PdfBackend` implementing `DocumentBackend`: page dimensions, password detection, clamped RGBA8 rasterization on opaque white (`<= 4096px` per side, 8-bit AA), recursive outline extraction, line/contiguous-run text span extraction with normalized rects, case-insensitive document search via `search_cb` returning normalized match rects.
+  4. Implement `src-tauri/src/worker.rs`: dedicated `doc-worker` OS thread owning the MuPDF thread-local context and a `HashMap<u64, Box<dyn DocumentBackend>>` for open tabs (with canonical-path deduplication), async request/response channel bridge (`tokio::sync::oneshot`), monotonic `document_id`, per-document close cleanup, and `render_epoch` cancellation for stale scroll/zoom/tab-switch renders.
   5. Write tests:
      - Unit tests: coordinate normalization edge cases, dimension clamping, unsupported/missing file errors, stale-epoch render cancellation, multi-document open/dedup/close lifecycle.
      - Integration tests (`src-tauri/tests/pdf_backend.rs`) using `common::discover_pdf_fixture()`: open local `tests/fixtures/*.pdf`, verify page count > 0, valid page dimensions, page 0 renders non-empty RGBA matching `w * h * 4`, outline extraction succeeds, text extraction returns non-empty spans with normalized coords in `[0.0, 1.0]`, and search locates known text from page text.
@@ -57,7 +55,7 @@ Execute phases sequentially. Complete every item in a phase's **Exit Gate** befo
      - `close_document` accepts `{ document_id }` and drops only that tab's backend handle.
      - `render_page` returns `tauri::ipc::Response` with raw `[width: u32 LE][height: u32 LE][RGBA8]` bytes (zero base64/JSON serialization).
      - Thin validation and clean `ReaderError` returns on all commands.
-  3. Wire `src-tauri/src/lib.rs`: register `tauri-plugin-dialog`, resolve resource dir for PDFium, spawn worker, parse optional PDF file path from `std::env::args_os()`, manage `AppState`, and register all commands.
+  3. Wire `src-tauri/src/lib.rs`: register `tauri-plugin-dialog`, spawn worker, parse optional PDF file path from `std::env::args_os()`, manage `AppState`, and register all commands.
   4. Write unit tests for `state.rs` (save/load round-trip, recents cap at 10, canonical-path deduplication, corrupt JSON recovery, missing file handling).
 - **Exit Gate**:
   - `cargo test`, `cargo clippy --all-targets --all-features --locked -- -D warnings`, and `cargo fmt --check` pass.
@@ -80,7 +78,7 @@ Execute phases sequentially. Complete every item in a phase's **Exit Gate** befo
      - Mount only the active tab in DOM; release outgoing tab canvases (`canvas.width = 0; canvas.height = 0`) on tab switch to keep GPU/RAM flat while restoring target tab scroll/page/zoom immediately.
      - Pre-size page placeholders from `page_dimensions`.
      - Virtualized rendering (`IntersectionObserver` + `±2` page overscan, evict canvases beyond `±6` pages).
-     - HiDPI (`devicePixelRatio`) rendering painted via `ImageData` / `putImageData`.
+     - 1:1 physical HiDPI (`devicePixelRatio`) rendering with device-pixel-snapped slot geometry, DPR-change listener, and `ImageData` / `putImageData` painting.
      - Render epoch bumping on tab switch/zoom/close to discard stale in-flight renders; preserve reading scroll anchor across zoom changes.
   8. Build `src/main.js`: orchestrate startup (`get_initial_file`, `get_persisted_state`), multi-tab open/switch/close transitions, drag-drop, and debounced per-file `save_reading_state`.
 - **Exit Gate**:
@@ -144,10 +142,10 @@ Execute phases sequentially. Complete every item in a phase's **Exit Gate** befo
      - Verify narrow window behavior (`640x480`), keyboard-only navigation, visible focus rings, and `prefers-reduced-motion`.
   2. Audit Rust code against `rust-best-practices`: no stray `.clone()`, no `.unwrap()`/`.expect()` outside tests, clean `///` docs, strict clippy pass.
   3. Audit UI against `frontend-design`: remove any superfluous border, shadow, or chrome element that does not earn its space.
-  4. Verify standalone release build: run `cargo tauri build` and launch the built executable to confirm bundled `pdfium.dll` resolves outside the dev tree.
+  4. Verify standalone release build: run `cargo tauri build` and launch the built executable outside the dev tree to confirm the statically linked MuPDF binary runs standalone without external PDF DLLs.
 - **Exit Gate**:
   - `cargo fmt --check` passes.
   - `cargo clippy --all-targets --all-features --locked -- -D warnings` passes.
   - `cargo test` passes.
   - `cargo tauri build` succeeds on Windows x64 and opens a local `tests/fixtures/*.pdf` cleanly.
-  - `git status --short` confirms zero tracked files in `tests/fixtures/` or `src-tauri/resources/pdfium/`, and repo-wide search confirms no specific fixture filename appears anywhere in tracked files.
+  - `git status --short` confirms zero tracked files in `tests/fixtures/`, and repo-wide search confirms no specific fixture filename appears anywhere in tracked files.

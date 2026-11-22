@@ -35,10 +35,6 @@ pub enum ReaderError {
     #[error("document {0} is not open")]
     DocumentNotFound(u64),
 
-    /// Dynamic `PDFium` runtime library could not be located or loaded.
-    #[error("PDFium runtime library unavailable: {0}")]
-    PdfiumUnavailable(String),
-
     /// Render request was superseded by a newer epoch or a closed tab.
     #[error("render request cancelled")]
     Cancelled,
@@ -68,7 +64,6 @@ impl ReaderError {
             Self::InvalidDocument(_) => "invalid_document",
             Self::PageOutOfRange { .. } => "page_out_of_range",
             Self::DocumentNotFound(_) => "document_not_found",
-            Self::PdfiumUnavailable(_) => "pdfium_unavailable",
             Self::Cancelled => "cancelled",
             Self::Internal(_) => "internal",
         }
@@ -123,10 +118,6 @@ mod tests {
         assert_eq!(
             ReaderError::DocumentNotFound(42).code(),
             "document_not_found"
-        );
-        assert_eq!(
-            ReaderError::PdfiumUnavailable("missing dll".into()).code(),
-            "pdfium_unavailable"
         );
         assert_eq!(ReaderError::Cancelled.code(), "cancelled");
         assert_eq!(ReaderError::Internal("boom".into()).code(), "internal");

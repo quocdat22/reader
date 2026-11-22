@@ -63,17 +63,30 @@ impl RenderedPage {
     }
 }
 
-/// Axis-aligned rectangle in PDF page points (bottom-left origin).
+/// Axis-aligned rectangle in top-left page points (`y` increases downward).
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct PdfPointsRect {
+pub struct PagePointsRect {
     /// Left X coordinate in points.
     pub left: f32,
-    /// Bottom Y coordinate in points.
-    pub bottom: f32,
-    /// Right X coordinate in points.
-    pub right: f32,
     /// Top Y coordinate in points.
     pub top: f32,
+    /// Right X coordinate in points.
+    pub right: f32,
+    /// Bottom Y coordinate in points.
+    pub bottom: f32,
+}
+
+impl PagePointsRect {
+    /// Returns the smallest rectangle enclosing both `self` and `other`.
+    #[must_use]
+    pub fn union(self, other: Self) -> Self {
+        Self {
+            left: self.left.min(other.left),
+            top: self.top.min(other.top),
+            right: self.right.max(other.right),
+            bottom: self.bottom.max(other.bottom),
+        }
+    }
 }
 
 /// Page-relative rectangle in top-left normalized `[0.0, 1.0]` coordinates.
@@ -203,13 +216,13 @@ pub fn clamp_render_dimensions(width_px: u32, height_px: u32) -> (u32, u32) {
     (scaled_width, scaled_height)
 }
 
-/// Converts a PDF rectangle (bottom-left origin, in points) on a `(0, 0, page_width, page_height)`
-/// page into top-left normalized `[0.0, 1.0]` coordinates.
+/// Converts a top-left page-space rectangle on a `(0, 0, page_width, page_height)` page
+/// into top-left normalized `[0.0, 1.0]` coordinates.
 ///
 /// Returns `None` if `page_width`/`page_height` are non-positive or any coordinate is non-finite.
 #[must_use]
-pub fn normalize_pdf_rect(
-    rect: PdfPointsRect,
+pub fn normalize_top_left_rect(
+    rect: PagePointsRect,
     page_width: f32,
     page_height: f32,
 ) -> Option<NormalizedRect> {
@@ -221,53 +234,53 @@ pub fn normalize_pdf_rect(
         return None;
     }
 
-    normalize_pdf_rect_in_box(
+    normalize_top_left_rect_in_box(
         rect,
-        PdfPointsRect {
+        PagePointsRect {
             left: 0.0,
-            bottom: 0.0,
+            top: 0.0,
             right: page_width,
-            top: page_height,
+            bottom: page_height,
         },
     )
 }
 
-/// Converts a PDF rectangle (bottom-left origin, in points) relative to a visible page box
-/// (such as a `CropBox` with non-zero origin) into top-left normalized `[0.0, 1.0]` coordinates.
+/// Converts a top-left page-space rectangle relative to `page_box` (such as a `CropBox`
+/// with non-zero origin) into top-left normalized `[0.0, 1.0]` coordinates.
 ///
-/// Returns `None` if the page box has non-positive dimensions or any coordinate is non-finite.
+/// Returns `None` if `page_box` has non-positive dimensions or any coordinate is non-finite.
 #[must_use]
-pub fn normalize_pdf_rect_in_box(
-    rect: PdfPointsRect,
-    page_box: PdfPointsRect,
+pub fn normalize_top_left_rect_in_box(
+    rect: PagePointsRect,
+    page_box: PagePointsRect,
 ) -> Option<NormalizedRect> {
     let all_finite = rect.left.is_finite()
-        && rect.bottom.is_finite()
-        && rect.right.is_finite()
         && rect.top.is_finite()
+        && rect.right.is_finite()
+        && rect.bottom.is_finite()
         && page_box.left.is_finite()
-        && page_box.bottom.is_finite()
+        && page_box.top.is_finite()
         && page_box.right.is_finite()
-        && page_box.top.is_finite();
+        && page_box.bottom.is_finite();
     if !all_finite {
         return None;
     }
 
     let box_width = page_box.right - page_box.left;
-    let box_height = page_box.top - page_box.bottom;
+    let box_height = page_box.bottom - page_box.top;
     if box_width <= 0.0 || box_height <= 0.0 {
         return None;
     }
 
     let left = rect.left.min(rect.right) - page_box.left;
     let right = rect.left.max(rect.right) - page_box.left;
-    let bottom = rect.bottom.min(rect.top) - page_box.bottom;
-    let top = rect.bottom.max(rect.top) - page_box.bottom;
+    let top = rect.top.min(rect.bottom) - page_box.top;
+    let bottom = rect.top.max(rect.bottom) - page_box.top;
 
     let x0 = (left / box_width).clamp(0.0, 1.0);
     let x1 = (right / box_width).clamp(0.0, 1.0);
-    let y0 = (1.0 - (top / box_height)).clamp(0.0, 1.0);
-    let y1 = (1.0 - (bottom / box_height)).clamp(0.0, 1.0);
+    let y0 = (top / box_height).clamp(0.0, 1.0);
+    let y1 = (bottom / box_height).clamp(0.0, 1.0);
 
     let width = (x1 - x0).clamp(0.0, 1.0 - x0);
     let height = (y1 - y0).clamp(0.0, 1.0 - y0);
@@ -280,28 +293,14 @@ pub fn normalize_pdf_rect_in_box(
     })
 }
 
-/// Opens a document using default `PDFium` library discovery paths.
+/// Opens a document from `path` using the appropriate backend for its format.
 ///
 /// # Errors
 /// - Returns [`ReaderError::Io`] if `path` cannot be opened or read.
 /// - Returns [`ReaderError::UnsupportedFormat`] if the file is not a supported format.
-/// - Returns [`ReaderError::PasswordProtected`], [`ReaderError::InvalidDocument`],
-///   or [`ReaderError::PdfiumUnavailable`] if the backend fails to open the file.
+/// - Returns [`ReaderError::PasswordProtected`] or [`ReaderError::InvalidDocument`]
+///   if the backend fails to open the file.
 pub fn open(path: &Path) -> Result<Box<dyn DocumentBackend>, ReaderError> {
-    open_with_resource_dir(path, None)
-}
-
-/// Opens a document with an optional Tauri `resource_dir` hint for dynamic engine resolution.
-///
-/// # Errors
-/// - Returns [`ReaderError::Io`] if `path` cannot be opened or read.
-/// - Returns [`ReaderError::UnsupportedFormat`] if the file is not a supported format.
-/// - Returns [`ReaderError::PasswordProtected`], [`ReaderError::InvalidDocument`],
-///   or [`ReaderError::PdfiumUnavailable`] if the backend fails to open the file.
-pub fn open_with_resource_dir(
-    path: &Path,
-    resource_dir: Option<&Path>,
-) -> Result<Box<dyn DocumentBackend>, ReaderError> {
     if !is_pdf_file(path)? {
         let label = path
             .extension()
@@ -311,7 +310,7 @@ pub fn open_with_resource_dir(
         return Err(ReaderError::UnsupportedFormat(label));
     }
 
-    let backend = pdf::PdfBackend::open(path, resource_dir)?;
+    let backend = pdf::PdfBackend::open(path)?;
     Ok(Box::new(backend))
 }
 
@@ -378,15 +377,15 @@ mod tests {
     }
 
     #[test]
-    fn normalize_pdf_rect_maps_top_left_quadrant_from_bottom_left_origin() {
-        let rect = PdfPointsRect {
+    fn normalize_top_left_rect_maps_top_left_quadrant() {
+        let rect = PagePointsRect {
             left: 0.0,
-            bottom: 400.0,
+            top: 0.0,
             right: 300.0,
-            top: 800.0,
+            bottom: 400.0,
         };
 
-        let normalized = normalize_pdf_rect(rect, 600.0, 800.0).expect("valid rect");
+        let normalized = normalize_top_left_rect(rect, 600.0, 800.0).expect("valid rect");
 
         assert_approx_eq(normalized.x, 0.0);
         assert_approx_eq(normalized.y, 0.0);
@@ -395,15 +394,15 @@ mod tests {
     }
 
     #[test]
-    fn normalize_pdf_rect_maps_bottom_right_quadrant_to_lower_half() {
-        let rect = PdfPointsRect {
+    fn normalize_top_left_rect_maps_bottom_right_quadrant() {
+        let rect = PagePointsRect {
             left: 300.0,
-            bottom: 0.0,
+            top: 600.0,
             right: 600.0,
-            top: 200.0,
+            bottom: 800.0,
         };
 
-        let normalized = normalize_pdf_rect(rect, 600.0, 800.0).expect("valid rect");
+        let normalized = normalize_top_left_rect(rect, 600.0, 800.0).expect("valid rect");
 
         assert_approx_eq(normalized.x, 0.5);
         assert_approx_eq(normalized.y, 0.75);
@@ -412,15 +411,15 @@ mod tests {
     }
 
     #[test]
-    fn normalize_pdf_rect_handles_inverted_edges_and_clamps_out_of_bounds() {
-        let rect = PdfPointsRect {
+    fn normalize_top_left_rect_handles_inverted_edges_and_clamps_out_of_bounds() {
+        let rect = PagePointsRect {
             left: 700.0,
-            bottom: 900.0,
+            top: 900.0,
             right: -50.0,
-            top: -100.0,
+            bottom: -100.0,
         };
 
-        let normalized = normalize_pdf_rect(rect, 600.0, 800.0).expect("clamped rect");
+        let normalized = normalize_top_left_rect(rect, 600.0, 800.0).expect("clamped rect");
 
         assert_approx_eq(normalized.x, 0.0);
         assert_approx_eq(normalized.y, 0.0);
@@ -429,21 +428,21 @@ mod tests {
     }
 
     #[test]
-    fn normalize_pdf_rect_in_box_shifts_nonzero_cropbox_origin() {
-        let crop_box = PdfPointsRect {
+    fn normalize_top_left_rect_in_box_shifts_nonzero_origin() {
+        let crop_box = PagePointsRect {
             left: 100.0,
-            bottom: 50.0,
+            top: 50.0,
             right: 500.0,
-            top: 650.0,
+            bottom: 650.0,
         };
-        let rect = PdfPointsRect {
+        let rect = PagePointsRect {
             left: 200.0,
-            bottom: 350.0,
+            top: 200.0,
             right: 300.0,
-            top: 500.0,
+            bottom: 350.0,
         };
 
-        let normalized = normalize_pdf_rect_in_box(rect, crop_box).expect("cropped rect");
+        let normalized = normalize_top_left_rect_in_box(rect, crop_box).expect("cropped rect");
 
         assert_approx_eq(normalized.x, 0.25);
         assert_approx_eq(normalized.y, 0.25);
@@ -452,29 +451,29 @@ mod tests {
     }
 
     #[test]
-    fn normalize_pdf_rect_returns_none_for_invalid_page_dimensions() {
-        let rect = PdfPointsRect {
+    fn normalize_top_left_rect_returns_none_for_invalid_page_dimensions() {
+        let rect = PagePointsRect {
             left: 0.0,
-            bottom: 0.0,
+            top: 0.0,
             right: 10.0,
-            top: 10.0,
+            bottom: 10.0,
         };
 
-        assert_eq!(normalize_pdf_rect(rect, 0.0, 800.0), None);
-        assert_eq!(normalize_pdf_rect(rect, 600.0, -1.0), None);
-        assert_eq!(normalize_pdf_rect(rect, f32::NAN, 800.0), None);
+        assert_eq!(normalize_top_left_rect(rect, 0.0, 800.0), None);
+        assert_eq!(normalize_top_left_rect(rect, 600.0, -1.0), None);
+        assert_eq!(normalize_top_left_rect(rect, f32::NAN, 800.0), None);
     }
 
     #[test]
-    fn normalize_pdf_rect_returns_none_for_non_finite_rect_coordinates() {
-        let rect = PdfPointsRect {
+    fn normalize_top_left_rect_returns_none_for_non_finite_rect_coordinates() {
+        let rect = PagePointsRect {
             left: f32::INFINITY,
-            bottom: 0.0,
+            top: 0.0,
             right: 10.0,
-            top: 10.0,
+            bottom: 10.0,
         };
 
-        assert_eq!(normalize_pdf_rect(rect, 600.0, 800.0), None);
+        assert_eq!(normalize_top_left_rect(rect, 600.0, 800.0), None);
     }
 
     #[test]

@@ -27,6 +27,10 @@ function getEffectiveDpr() {
   return Math.max(1, Math.min(window.devicePixelRatio || 1, MAX_DPR));
 }
 
+function snapToDevicePixels(cssPx, dpr) {
+  return Math.round(cssPx * dpr) / dpr;
+}
+
 function releaseCanvas(canvas) {
   if (!canvas) {
     return;
@@ -91,7 +95,7 @@ function findLastPageAtOrBefore(offsets, y) {
 export function createViewport({ viewportEl, trackEl, onViewStateChange }) {
   /** @type {any | null} */
   let activeTab = null;
-  /** @type {Array<{ top: number, height: number, width: number }>} */
+  /** @type {Array<{ top: number, height: number, width: number, widthPx: number, heightPx: number }>} */
   let pageOffsets = [];
   /** @type {Array<HTMLDivElement>} */
   let slotElements = [];
@@ -108,8 +112,13 @@ export function createViewport({ viewportEl, trackEl, onViewStateChange }) {
   let resizeRafId = null;
   let lastViewportWidth = 0;
   let lastViewportHeight = 0;
+  let currentMaxPageWidth = 0;
+  let currentTrackHeight = 0;
+  let currentDpr = getEffectiveDpr();
   /** @type {IntersectionObserver | null} */
   let intersectionObserver = null;
+  /** @type {MediaQueryList | null} */
+  let dprMediaQuery = null;
 
   function bumpEpoch() {
     renderEpoch += 1;
@@ -144,38 +153,66 @@ export function createViewport({ viewportEl, trackEl, onViewStateChange }) {
     return clampZoom(Math.min(availableW / baseW, availableH / baseH));
   }
 
-  function computeLayoutGeometry(tab, scale) {
+  function computeLayoutGeometry(tab, scale, dpr) {
     const offsets = new Array(tab.pageDimensions.length);
-    let y = TRACK_PADDING_Y;
+    const padY = snapToDevicePixels(TRACK_PADDING_Y, dpr);
+    const gapY = snapToDevicePixels(PAGE_GAP_PX, dpr);
+    let y = padY;
     let maxPageWidth = 0;
 
     for (let i = 0; i < tab.pageDimensions.length; i += 1) {
       const dims = tab.pageDimensions[i];
-      const width = Math.max(1, Math.round(dims.width_pt * PT_TO_CSS_PX * scale));
-      const height = Math.max(1, Math.round(dims.height_pt * PT_TO_CSS_PX * scale));
-      offsets[i] = { top: y, width, height };
+      const rawW = Math.max(1, dims.width_pt * PT_TO_CSS_PX * scale);
+      const rawH = Math.max(1, dims.height_pt * PT_TO_CSS_PX * scale);
+      const widthPx = Math.max(1, Math.round(rawW * dpr));
+      const heightPx = Math.max(1, Math.round(rawH * dpr));
+      const width = widthPx / dpr;
+      const height = heightPx / dpr;
+      const top = snapToDevicePixels(y, dpr);
+      offsets[i] = { top, width, height, widthPx, heightPx };
       if (width > maxPageWidth) {
         maxPageWidth = width;
       }
-      y += height + PAGE_GAP_PX;
+      y = top + height + gapY;
     }
 
     const totalHeight =
-      tab.pageDimensions.length > 0 ? y - PAGE_GAP_PX + TRACK_PADDING_Y : TRACK_PADDING_Y * 2;
+      tab.pageDimensions.length > 0 ? y - gapY + padY : padY * 2;
 
     return { offsets, totalHeight, maxPageWidth };
   }
 
-  function applyTrackSize(totalHeight, maxPageWidth) {
-    trackEl.style.height = `${Math.ceil(totalHeight)}px`;
-    trackEl.style.width = `${Math.ceil(maxPageWidth + TRACK_PADDING_X)}px`;
+  function computeTrackWidth(maxPageWidth, dpr) {
+    const viewportWidth = viewportEl.clientWidth || window.innerWidth || 900;
+    const minTrackWidth = maxPageWidth + TRACK_PADDING_X;
+    return snapToDevicePixels(Math.max(viewportWidth, minTrackWidth), dpr);
   }
 
-  function applySlotStyles() {
+  function applyTrackSize(totalHeight, maxPageWidth, dpr) {
+    currentTrackHeight = totalHeight;
+    currentMaxPageWidth = maxPageWidth;
+    const trackWidth = computeTrackWidth(maxPageWidth, dpr);
+    trackEl.style.height = `${snapToDevicePixels(totalHeight, dpr)}px`;
+    trackEl.style.width = `${trackWidth}px`;
+    return trackWidth;
+  }
+
+  function applySlotHorizontalPositions(trackWidth, dpr) {
     for (let i = 0; i < slotElements.length; i += 1) {
       const slot = slotElements[i];
       const geom = pageOffsets[i];
+      const left = snapToDevicePixels(Math.max(0, (trackWidth - geom.width) / 2), dpr);
+      slot.style.left = `${left}px`;
+    }
+  }
+
+  function applySlotStyles(trackWidth, dpr) {
+    for (let i = 0; i < slotElements.length; i += 1) {
+      const slot = slotElements[i];
+      const geom = pageOffsets[i];
+      const left = snapToDevicePixels(Math.max(0, (trackWidth - geom.width) / 2), dpr);
       slot.style.top = `${geom.top}px`;
+      slot.style.left = `${left}px`;
       slot.style.width = `${geom.width}px`;
       slot.style.height = `${geom.height}px`;
     }
@@ -255,9 +292,8 @@ export function createViewport({ viewportEl, trackEl, onViewStateChange }) {
 
       const requestEpoch = renderEpoch;
       const requestDocId = activeTab.documentId;
-      const dpr = getEffectiveDpr();
-      const widthPx = Math.max(1, Math.round(geom.width * dpr));
-      const heightPx = Math.max(1, Math.round(geom.height * dpr));
+      const widthPx = geom.widthPx;
+      const heightPx = geom.heightPx;
 
       inFlightPages.add(pageIndex);
       activeRenders += 1;
@@ -398,7 +434,7 @@ export function createViewport({ viewportEl, trackEl, onViewStateChange }) {
       return;
     }
     const targetScrollTop = geom.top + anchor.ratioInPage * geom.height - (anchor.anchorOffset ?? 0);
-    viewportEl.scrollTop = Math.max(0, targetScrollTop);
+    viewportEl.scrollTop = snapToDevicePixels(Math.max(0, targetScrollTop), currentDpr);
   }
 
   function relayoutPreservingAnchor() {
@@ -406,14 +442,19 @@ export function createViewport({ viewportEl, trackEl, onViewStateChange }) {
       return;
     }
 
+    currentDpr = getEffectiveDpr();
     const anchor = snapshotScrollAnchor();
     const scale = computeEffectiveScale(activeTab);
     activeTab.zoomScale = scale;
 
-    const { offsets, totalHeight, maxPageWidth } = computeLayoutGeometry(activeTab, scale);
+    const { offsets, totalHeight, maxPageWidth } = computeLayoutGeometry(
+      activeTab,
+      scale,
+      currentDpr,
+    );
     pageOffsets = offsets;
-    applyTrackSize(totalHeight, maxPageWidth);
-    applySlotStyles();
+    const trackWidth = applyTrackSize(totalHeight, maxPageWidth, currentDpr);
+    applySlotStyles(trackWidth, currentDpr);
 
     // Mark existing canvases stale so they stay visible while crisp HiDPI bitmaps render.
     bumpEpoch();
@@ -463,6 +504,8 @@ export function createViewport({ viewportEl, trackEl, onViewStateChange }) {
     releaseAllCanvases();
     slotElements = [];
     pageOffsets = [];
+    currentMaxPageWidth = 0;
+    currentTrackHeight = 0;
     trackEl.textContent = "";
     trackEl.style.height = "0px";
     trackEl.style.width = "100%";
@@ -474,12 +517,13 @@ export function createViewport({ viewportEl, trackEl, onViewStateChange }) {
     unmount();
 
     activeTab = tab;
+    currentDpr = getEffectiveDpr();
     const scale = computeEffectiveScale(tab);
     tab.zoomScale = scale;
 
-    const { offsets, totalHeight, maxPageWidth } = computeLayoutGeometry(tab, scale);
+    const { offsets, totalHeight, maxPageWidth } = computeLayoutGeometry(tab, scale, currentDpr);
     pageOffsets = offsets;
-    applyTrackSize(totalHeight, maxPageWidth);
+    const trackWidth = applyTrackSize(totalHeight, maxPageWidth, currentDpr);
 
     const fragment = document.createDocumentFragment();
     slotElements = new Array(offsets.length);
@@ -488,7 +532,9 @@ export function createViewport({ viewportEl, trackEl, onViewStateChange }) {
       const slot = document.createElement("div");
       slot.className = "page-slot";
       slot.dataset.pageIndex = String(i);
+      const left = snapToDevicePixels(Math.max(0, (trackWidth - offsets[i].width) / 2), currentDpr);
       slot.style.top = `${offsets[i].top}px`;
+      slot.style.left = `${left}px`;
       slot.style.width = `${offsets[i].width}px`;
       slot.style.height = `${offsets[i].height}px`;
       slotElements[i] = slot;
@@ -521,15 +567,18 @@ export function createViewport({ viewportEl, trackEl, onViewStateChange }) {
         Math.min(tab.scrollAnchor.pageIndex, offsets.length - 1),
       );
       const geom = offsets[anchorIndex];
-      viewportEl.scrollTop = Math.max(
-        0,
-        geom.top + tab.scrollAnchor.topOffsetRatio * geom.height,
+      viewportEl.scrollTop = snapToDevicePixels(
+        Math.max(0, geom.top + tab.scrollAnchor.topOffsetRatio * geom.height),
+        currentDpr,
       );
     } else if (typeof tab.scrollTop === "number" && Number.isFinite(tab.scrollTop)) {
-      viewportEl.scrollTop = Math.max(0, tab.scrollTop);
+      viewportEl.scrollTop = snapToDevicePixels(Math.max(0, tab.scrollTop), currentDpr);
     } else if (offsets.length > 0) {
       const targetIndex = Math.max(0, Math.min(tab.pageIndex, offsets.length - 1));
-      viewportEl.scrollTop = Math.max(0, offsets[targetIndex].top - TRACK_PADDING_Y);
+      viewportEl.scrollTop = snapToDevicePixels(
+        Math.max(0, offsets[targetIndex].top - TRACK_PADDING_Y),
+        currentDpr,
+      );
     } else {
       viewportEl.scrollTop = 0;
     }
@@ -547,7 +596,10 @@ export function createViewport({ viewportEl, trackEl, onViewStateChange }) {
       return;
     }
     const clamped = Math.max(0, Math.min(pageIndex, pageOffsets.length - 1));
-    viewportEl.scrollTop = Math.max(0, pageOffsets[clamped].top - TRACK_PADDING_Y);
+    viewportEl.scrollTop = snapToDevicePixels(
+      Math.max(0, pageOffsets[clamped].top - TRACK_PADDING_Y),
+      currentDpr,
+    );
     activeTab.pageIndex = clamped;
     activeTab.scrollTop = viewportEl.scrollTop;
     activeTab.scrollAnchor = captureTabAnchor(activeTab);
@@ -667,6 +719,10 @@ export function createViewport({ viewportEl, trackEl, onViewStateChange }) {
       (activeTab.zoomMode === "fit_page" && (widthChanged || heightChanged));
 
     if (!shouldRelayout) {
+      if (widthChanged && pageOffsets.length > 0) {
+        const trackWidth = applyTrackSize(currentTrackHeight, currentMaxPageWidth, currentDpr);
+        applySlotHorizontalPositions(trackWidth, currentDpr);
+      }
       scheduleVisibleRenders();
       return;
     }
@@ -681,6 +737,33 @@ export function createViewport({ viewportEl, trackEl, onViewStateChange }) {
   });
 
   resizeObserver.observe(viewportEl);
+
+  function handleDprChange() {
+    observeDprChange();
+    const nextDpr = getEffectiveDpr();
+    if (nextDpr === currentDpr) {
+      return;
+    }
+    currentDpr = nextDpr;
+    if (activeTab) {
+      relayoutPreservingAnchor();
+    }
+  }
+
+  function observeDprChange() {
+    if (dprMediaQuery) {
+      dprMediaQuery.removeEventListener("change", handleDprChange);
+      dprMediaQuery = null;
+    }
+    if (typeof window.matchMedia !== "function") {
+      return;
+    }
+    const rawDpr = window.devicePixelRatio || 1;
+    dprMediaQuery = window.matchMedia(`(resolution: ${rawDpr}dppx)`);
+    dprMediaQuery.addEventListener("change", handleDprChange, { once: true });
+  }
+
+  observeDprChange();
 
   return {
     mountTab,

@@ -62,11 +62,6 @@ export function formatOpenError(err, context = {}) {
         message: "Could not open this PDF. The file appears damaged or incomplete.",
         canRemoveRecent: fromRecent,
       };
-    case "pdfium_unavailable":
-      return {
-        message: "PDF rendering library is unavailable. Reinstall or run the PDFium setup script.",
-        canRemoveRecent: false,
-      };
     default:
       return {
         message:

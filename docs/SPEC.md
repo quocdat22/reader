@@ -12,7 +12,7 @@ Concise architectural, interface, and visual specification for `reader` (`com.ro
 - **Zoom & navigation**: Fit-width, fit-page, discrete zoom steps (`+` / `-` / `Ctrl+Wheel` / `Ctrl+0`), and direct page jump.
 - **Table of Contents**: Toggleable left outline drawer displaying collapsible document bookmarks/chapters.
 - **In-document search**: `Ctrl+F` search bar with match counter (`current / total`), prev/next navigation, and page-level highlight boxes.
-- **Text selection & copy**: Lightweight transparent HTML text overlay aligned from PDFium geometry so native selection and `Ctrl+C` copy work cleanly.
+- **Text selection & copy**: Lightweight transparent HTML text overlay aligned from MuPDF geometry so native selection and `Ctrl+C` copy work cleanly.
 - **Session continuity**: Remember last page and zoom setting per file; show a concise recent files list on the empty state.
 - **Minimal multi-tab window**: Open multiple documents as tabs inside a single window; opening an already-open file focuses its existing tab; closing the last tab returns to the empty state.
 
@@ -41,20 +41,15 @@ Concise architectural, interface, and visual specification for `reader` (`com.ro
 |  - commands.rs   Thin async #[tauri::command] handlers            |
 |  - state.rs      AppState + atomic JSON persistence               |
 |  - worker.rs     Single dedicated thread owning open tab backends |
-|  - backend/      DocumentBackend trait + PdfBackend (pdfium)      |
+|  - backend/      DocumentBackend trait + PdfBackend (mupdf)       |
 +-------------------------------------------------------------------+
 ```
 
-### Target Platforms & PDFium Provisioning
+### Target Platforms & MuPDF Engine
 - **Primary target**: Windows x64 (`x86_64-pc-windows-msvc`) for development, testing, and bundling. Keep path handling and shortcuts cross-platform-clean (`Ctrl` / `Cmd` awareness, `std::path::PathBuf`).
-- **Engine**: `pdfium-render` binding dynamically to `pdfium.dll` (`libpdfium.so` / `libpdfium.dylib` on Unix).
-- **Acquisition**: `scripts/fetch-pdfium.ps1` downloads the pinned Windows x64 archive from `bblanchon/pdfium-binaries` into gitignored `src-tauri/resources/pdfium/pdfium.dll`.
-- **Bundling**: `tauri.conf.json` bundles `resources/pdfium/*` via `bundle.resources`.
-- **Runtime resolution order**:
-  1. `PDFIUM_LIB_PATH` environment variable (explicit override for local/test runs).
-  2. Tauri resolved resource directory (`app.path().resource_dir()/pdfium/`).
-  3. Directory adjacent to current executable.
-  4. Dev fallback (`CARGO_MANIFEST_DIR/resources/pdfium/`).
+- **Engine & license**: Statically linked `mupdf` (`0.8`, `AGPL-3.0`) compiled from source via `mupdf-sys` with `default-features = false` and `features = ["base14-fonts", "system-fonts", "bundled-fonts-noto"]` (strict PDF-only format scope, URW Base-14 standard fonts, native OS font fallback via DirectWrite/`font-kit`, and bundled non-CJK Noto Unicode fallback fonts).
+- **Build prerequisites (Windows x64)**: Visual Studio C++ Build Tools (`MSBuild`) and LLVM (`libclang` for `bindgen`, auto-discovered on `PATH` or via `LIBCLANG_PATH`).
+- **Bundling**: Single self-contained executable — zero external PDF DLLs to fetch, discover, or bundle at runtime.
 
 ---
 
@@ -70,10 +65,10 @@ src-tauri/src/
   error.rs         ReaderError (thiserror) + serializable IPC ErrorResponse
   commands.rs      Thin Tauri commands delegating to worker & state
   state.rs         AppState, PersistedState (recents + reading positions), atomic save
-  worker.rs        Dedicated PDFium worker thread, request enum, render cancellation
+  worker.rs        Dedicated MuPDF worker thread, request enum, render cancellation
   backend/
     mod.rs         DocumentBackend trait + core DTOs (NormalizedRect, OutlineItem, ...)
-    pdf.rs         PdfBackend (pdfium-render) + dynamic library discovery
+    pdf.rs         PdfBackend (statically linked MuPDF)
 ```
 
 ### Lightweight `DocumentBackend` Trait Boundary
@@ -95,18 +90,18 @@ pub trait DocumentBackend {
 - Opening a file dispatches by extension/magic header through a small factory function (`backend::open(path) -> Result<Box<dyn DocumentBackend>, ReaderError>`).
 
 ### Concurrency & Render Cancellation (`worker.rs`)
-- PDFium is single-threaded and `!Send`/`!Sync`. Construct `Pdfium` **inside** the dedicated worker OS thread (`std::thread::Builder::new().name("doc-worker".into())`).
-- The worker owns a `HashMap<u64, OpenDocument>` mapping monotonic `document_id: u64` to its `Box<dyn DocumentBackend>` and canonical path, so multiple open tabs coexist safely on the single PDFium thread.
-- Opening a file whose canonical path is already loaded returns the existing `document_id` (`already_open: true`) so the frontend focuses that tab without opening a duplicate PDFium handle.
-- Closing a tab removes its entry from the map and immediately drops its PDFium handle.
+- All document operations execute on a single dedicated worker OS thread (`std::thread::Builder::new().name("doc-worker".into())`) that owns the thread-local MuPDF context and every open `Document` handle cleanly without cross-thread FFI lock contention.
+- The worker owns a `HashMap<u64, OpenDocument>` mapping monotonic `document_id: u64` to its `Box<dyn DocumentBackend>` and canonical path, so multiple open tabs coexist safely on the single worker thread.
+- Opening a file whose canonical path is already loaded returns the existing `document_id` (`already_open: true`) so the frontend focuses that tab without opening a duplicate handle.
+- Closing a tab removes its entry from the map and immediately drops its MuPDF document handle.
 - Commands send typed `WorkerRequest` messages over a channel with a `tokio::sync::oneshot::Sender` reply channel so Tauri `async fn` commands never block the runtime.
 - Maintain a monotonic `render_epoch: AtomicU64`:
   - When the user switches tabs, closes a tab, or rapidly scrolls/zooms, bump the epoch and discard queued stale render requests for older epochs or closed documents.
   - Return a typed `ReaderError::Cancelled` so the frontend ignores superseded renders cleanly.
 
 ### Normalized Coordinate System
-- PDFium uses bottom-left origin in PDF points.
-- `PdfBackend` converts **all** text boxes and search highlight rects into **top-left normalized `[0.0, 1.0]` coordinates**:
+- MuPDF uses top-left origin in page points (`page.bounds()`).
+- `PdfBackend` renders pages onto opaque-white `RGBA8` pixmaps at maximum 8-bit anti-aliasing (`aa_level = 8`) with exact target pixel transforms, and converts **all** text runs (line/contiguous-run level, splitting on wide column/table gutters) and search highlight quads into **top-left normalized `[0.0, 1.0]` coordinates**:
   ```rust
   #[derive(Debug, Clone, Copy, Serialize)]
   pub struct NormalizedRect {
@@ -119,7 +114,7 @@ pub trait DocumentBackend {
 - Frontend maps `NormalizedRect` to CSS pixels by multiplying by rendered page CSS `width` and `height`. Zooming never requires re-fetching text or search geometry from Rust.
 
 ### Error Handling (`error.rs`)
-- Define `ReaderError` with `thiserror`: `Io`, `UnsupportedFormat`, `PasswordProtected`, `InvalidDocument`, `PageOutOfRange`, `PdfiumUnavailable`, `Cancelled`, `Internal`.
+- Define `ReaderError` with `thiserror`: `Io`, `UnsupportedFormat`, `PasswordProtected`, `InvalidDocument`, `PageOutOfRange`, `DocumentNotFound`, `Cancelled`, `Internal`.
 - Implement `serde::Serialize` for `ReaderError` (or convert to `{ code, message }`) so frontend can show clear, actionable errors without parsing raw strings.
 
 ---
@@ -133,7 +128,7 @@ All commands are invoked via `window.__TAURI__.core.invoke`.
 | `get_initial_file` | — | `Option<String>` | Consumes startup CLI / "Open With" path once. |
 | `get_persisted_state` | — | `PersistedState` | Returns recent files and saved reading positions. |
 | `open_document` | `{ path: String }` | `OpenDocumentResponse` | Returns `document_id`, `canonical_path`, `metadata`, `page_dimensions`, `saved_position`, `already_open`. Updates recents. |
-| `close_document` | `{ document_id: u64 }` | `()` | Drops that tab's document in the worker; frees its PDFium handles. |
+| `close_document` | `{ document_id: u64 }` | `()` | Drops that tab's document in the worker; frees its MuPDF handles. |
 | `render_page` | `{ document_id: u64, page_index: usize, width_px: u32, height_px: u32, epoch: u64 }` | `tauri::ipc::Response` (binary) | Raw payload: `[width: u32 LE][height: u32 LE][RGBA8 pixels]`. Zero JSON/base64/PNG overhead. |
 | `get_outline` | `{ document_id: u64 }` | `Vec<OutlineItem>` | Nested tree `{ title, page_index: Option<usize>, children }`. |
 | `get_page_text` | `{ document_id: u64, page_index: usize }` | `Vec<TextSpan>` | `{ text: String, rect: NormalizedRect }` for text selection overlay. |
@@ -224,7 +219,7 @@ src/
 - Pre-compute full vertical scroll geometry from `page_dimensions` immediately on open/switch (exact per-page aspect ratio + fixed gap).
 - Render only visible pages plus an overscan buffer (`±2` pages around viewport).
 - Cap rendered canvases in memory (evict canvases beyond `±6` pages from viewport, freeing GPU/backing store by setting `canvas.width = 0; canvas.height = 0`).
-- Multiply CSS page dimensions by `window.devicePixelRatio` when requesting `render_page` for sharp text on HiDPI displays.
+- Snap page slot dimensions and `(left, top)` offsets to the physical device pixel grid (`Math.round(css * dpr) / dpr` without half-pixel `translateX(-50%)`), request exact physical `(widthPx, heightPx)` bitmaps matching `slot.width * dpr`, and re-render automatically when `window.devicePixelRatio` changes across displays.
 - On zoom change, preserve the reader's vertical scroll anchor relative to the current page, increment the render epoch, and re-render visible pages first.
 
 ### Keyboard Shortcuts
@@ -259,4 +254,4 @@ src/
 ### Quality Gates
 - **Rust**: `cargo fmt --check`, `cargo clippy --all-targets --all-features --locked -- -D warnings`, `cargo test`.
 - **UI**: Two-pass `frontend-design` plan + self-critique, live manual verification in `cargo tauri dev` against a local `tests/fixtures/*.pdf`, responsive resize check, keyboard navigation audit.
-- **Hygiene**: `git status --short` must confirm `tests/fixtures/` and `src-tauri/resources/pdfium/` remain untracked/ignored.
+- **Hygiene**: `git status --short` must confirm `tests/fixtures/` remains untracked/ignored.

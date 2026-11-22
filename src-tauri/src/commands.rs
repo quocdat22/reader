@@ -55,7 +55,7 @@ pub fn get_persisted_state(state: State<'_, AppState>) -> PersistedState {
 ///
 /// # Errors
 /// Returns [`ReaderError`] if `path` is empty, missing, unsupported, password-protected,
-/// corrupt, or if `PDFium` is unavailable.
+/// or corrupt.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn open_document(
     state: State<'_, AppState>,
@@ -84,7 +84,7 @@ pub async fn open_document(
     })
 }
 
-/// Closes an open document tab and immediately releases its `PDFium` handles on the worker.
+/// Closes an open document tab and immediately releases its backend handles on the worker.
 ///
 /// # Errors
 /// Returns [`ReaderError::Internal`] if the worker thread is no longer running.

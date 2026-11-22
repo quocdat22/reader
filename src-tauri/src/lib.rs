@@ -14,13 +14,12 @@ pub fn run() {
     let result = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            let resource_dir = app.path().resource_dir().ok();
             let state_path = app
                 .path()
                 .app_data_dir()
                 .map(|dir| dir.join("state.json"))?;
             let initial_file = state::parse_initial_file_arg(std::env::args_os());
-            let app_state = state::AppState::new(resource_dir, state_path, initial_file)?;
+            let app_state = state::AppState::new(state_path, initial_file)?;
             app.manage(app_state);
             Ok(())
         })

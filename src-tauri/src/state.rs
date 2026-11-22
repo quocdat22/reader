@@ -295,12 +295,8 @@ impl AppState {
     ///
     /// # Errors
     /// Returns [`ReaderError::Internal`] if the background `doc-worker` thread cannot be spawned.
-    pub fn new(
-        resource_dir: Option<PathBuf>,
-        state_path: PathBuf,
-        initial_file: Option<PathBuf>,
-    ) -> Result<Self, ReaderError> {
-        let worker = DocumentWorker::spawn(resource_dir)?;
+    pub fn new(state_path: PathBuf, initial_file: Option<PathBuf>) -> Result<Self, ReaderError> {
+        let worker = DocumentWorker::spawn()?;
         let persisted = PersistedState::load_or_default(&state_path);
 
         Ok(Self {
@@ -708,7 +704,7 @@ mod tests {
     #[test]
     fn app_state_take_initial_file_consumes_startup_path_once() {
         let dir = TempDirGuard::new("initial-file");
-        let app_state = AppState::new(None, dir.state_file(), Some(PathBuf::from("startup.pdf")))
+        let app_state = AppState::new(dir.state_file(), Some(PathBuf::from("startup.pdf")))
             .expect("create AppState");
 
         assert_eq!(

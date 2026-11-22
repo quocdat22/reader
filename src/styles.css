@@ -928,14 +928,14 @@ input:focus-visible,
 
 .viewport-track {
   position: relative;
-  margin: 0 auto;
+  margin: 0;
   min-width: 100%;
 }
 
 .page-slot {
   position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
+  top: 0;
+  left: 0;
   background-color: var(--surface-paper);
   box-shadow: var(--sheet-shadow);
   contain: layout style size;

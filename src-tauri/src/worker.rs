@@ -1,8 +1,8 @@
 //! Dedicated single-threaded document worker owning all open [`DocumentBackend`] instances.
 //!
-//! Because `PDFium` is single-threaded, all document open, render, outline, text, and
-//! search operations execute on one OS thread (`doc-worker`), bridged to async callers
-//! through `tokio::sync::mpsc` and `tokio::sync::oneshot`.
+//! All document open, render, outline, text, and search operations execute on one
+//! OS thread (`doc-worker`) owning the `MuPDF` thread-local context and document handles,
+//! bridged to async callers through `tokio::sync::mpsc` and `tokio::sync::oneshot`.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -15,7 +15,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::backend::{
     DocumentBackend, DocumentMetadata, OutlineItem, PageDimensions, RenderedPage, SearchMatch,
-    TextSpan, open_with_resource_dir,
+    TextSpan, open,
 };
 use crate::error::ReaderError;
 
@@ -90,9 +90,8 @@ impl DocumentWorker {
     ///
     /// # Errors
     /// Returns [`ReaderError::Internal`] if the OS fails to spawn the worker thread.
-    pub fn spawn(resource_dir: Option<PathBuf>) -> Result<Self, ReaderError> {
-        let opener: BackendOpener =
-            Box::new(move |path| open_with_resource_dir(path, resource_dir.as_deref()));
+    pub fn spawn() -> Result<Self, ReaderError> {
+        let opener: BackendOpener = Box::new(open);
         Self::spawn_with_opener(opener)
     }
 
@@ -136,7 +135,7 @@ impl DocumentWorker {
     /// path is already open (`already_open == true`).
     ///
     /// # Errors
-    /// Propagates filesystem, format, `PDFium`, or worker channel errors as [`ReaderError`].
+    /// Propagates filesystem, format, `MuPDF`, or worker channel errors as [`ReaderError`].
     pub async fn open_document(&self, path: PathBuf) -> Result<OpenedDocument, ReaderError> {
         let (reply_tx, reply_rx) = oneshot::channel();
         self.send_request(WorkerRequest::Open {
