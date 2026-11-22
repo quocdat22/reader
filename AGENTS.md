@@ -6,6 +6,7 @@ Operating contract for coding agents working on `reader` — a minimalist deskto
 
 1. [docs/SPEC.md](docs/SPEC.md) — product scope, non-goals, Rust/IPC architecture, UI brief, and test strategy.
 2. [docs/PHASES.md](docs/PHASES.md) — phased execution plan and exit gates. Execute one phase at a time; satisfy its exit gate before starting the next.
+3. [docs/CHANGES.md](docs/CHANGES.md) — post-v1 change requests amending the frozen baseline docs (`docs/changes/NNN-*.md`).
 
 ## Mandatory Skill Gates
 

@@ -72,6 +72,7 @@ function isZoomResetKey(event) {
  *   isInsideToc: (el: EventTarget | null) => boolean,
  *   isInsideSearch?: (el: EventTarget | null) => boolean,
  *   hasActiveTab: () => boolean,
+ *   hasActiveDocument?: () => boolean,
  *   isSearchOpen?: () => boolean,
  *   onOpenFile: () => void,
  *   onCloseActiveTab: () => void,
@@ -95,6 +96,7 @@ export function installShortcuts({
   isInsideToc,
   isInsideSearch = () => false,
   hasActiveTab,
+  hasActiveDocument = hasActiveTab,
   isSearchOpen = () => false,
   onOpenFile,
   onCloseActiveTab,
@@ -138,7 +140,7 @@ export function installShortcuts({
         onEscape();
         return;
       }
-      if (isSearchOpen()) {
+      if (hasActiveDocument() && isSearchOpen()) {
         event.preventDefault();
         onCloseSearch?.();
         return;
@@ -179,7 +181,7 @@ export function installShortcuts({
 
       if (isZoomInKey(event)) {
         event.preventDefault();
-        if (hasActiveTab()) {
+        if (hasActiveDocument()) {
           onZoomStep(1);
         }
         return;
@@ -187,7 +189,7 @@ export function installShortcuts({
 
       if (isZoomOutKey(event)) {
         event.preventDefault();
-        if (hasActiveTab()) {
+        if (hasActiveDocument()) {
           onZoomStep(-1);
         }
         return;
@@ -195,23 +197,23 @@ export function installShortcuts({
 
       if (isZoomResetKey(event)) {
         event.preventDefault();
-        if (hasActiveTab()) {
+        if (hasActiveDocument()) {
           onResetZoom();
         }
         return;
       }
 
       if (!event.shiftKey && lower === "f") {
-        // Always prevent WebView2's built-in find bar, even on the empty state.
+        // Always prevent WebView2's built-in find bar, even on the empty state or Home tab.
         event.preventDefault();
-        if (hasActiveTab()) {
+        if (hasActiveDocument()) {
           onOpenSearch?.();
         }
         return;
       }
 
       if (!event.shiftKey && lower === "g") {
-        if (hasActiveTab()) {
+        if (hasActiveDocument()) {
           event.preventDefault();
           onFocusPageInput();
         }
@@ -219,7 +221,7 @@ export function installShortcuts({
       }
 
       if (!event.shiftKey && lower === "b") {
-        if (hasActiveTab()) {
+        if (hasActiveDocument()) {
           event.preventDefault();
           onToggleToc();
         }
@@ -246,6 +248,7 @@ export function installShortcuts({
     // Enter / Shift+Enter cycle search matches when search is active and focus is not on a button/tree.
     if (
       event.key === "Enter" &&
+      hasActiveDocument() &&
       isSearchOpen() &&
       !isInsideToc(target) &&
       !isPrimaryButtonOrLink(target)
@@ -259,7 +262,7 @@ export function installShortcuts({
       return;
     }
 
-    if (event.shiftKey || !hasActiveTab() || isInsideToc(target)) {
+    if (event.shiftKey || !hasActiveDocument() || isInsideToc(target)) {
       return;
     }
 
@@ -286,7 +289,7 @@ export function installShortcuts({
     // Always block browser-level CSS page zoom in WebView2 so toolbar chrome stays crisp.
     event.preventDefault();
 
-    if (!hasActiveTab()) {
+    if (!hasActiveDocument()) {
       return;
     }
 

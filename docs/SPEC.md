@@ -2,6 +2,9 @@
 
 Concise architectural, interface, and visual specification for `reader` (`com.rookie.reader`), a minimalist Tauri v2 document reader targeting **PDF in v1** with a clean Rust boundary for future document formats.
 
+> [!NOTE]
+> This document is the frozen v1 baseline. Post-v1 amendments are tracked in [docs/CHANGES.md](CHANGES.md) without altering baseline prose below.
+
 ---
 
 ## 1. Product Scope
@@ -15,6 +18,9 @@ Concise architectural, interface, and visual specification for `reader` (`com.ro
 - **Text selection & copy**: Lightweight transparent HTML text overlay aligned from MuPDF geometry so native selection and `Ctrl+C` copy work cleanly.
 - **Session continuity**: Remember last page and zoom setting per file; show a concise recent files list on the empty state.
 - **Minimal multi-tab window**: Open multiple documents as tabs inside a single window; opening an already-open file focuses its existing tab; closing the last tab returns to the empty state.
+
+> [!NOTE]
+> **Amended by [CR-001](changes/001-tab-add-home-screen.md#3-tab-model-and-lifecycle)**: Clicking `+` (`tab-add-btn`) now opens a singleton `Home` tab showing the Home screen instead of launching the OS file dialog directly.
 
 ### v1 Non-Goals (Out of Scope)
 - Split views or multi-window session sync.
@@ -175,6 +181,9 @@ Apply `.agents/skills/frontend-design/SKILL.md` (two-pass design plan + self-cri
 - **Restraint**: Neutral quiet canvas framing crisp white PDF pages; spend visual accent deliberately in one place (active tab/focus/selection/current search match).
 - **Copywriting**: Plain active verbs in sentence case ("Open PDF", "No outline in this document", "File not found — remove from recent?"). Errors state what happened and how to recover without apologizing.
 
+> [!NOTE]
+> **Amended by [CR-001](changes/001-tab-add-home-screen.md#4-ui-shell-and-visual-behavior)**: In **Chrome geometry** above, `+` (`tab-add-btn`) now opens or focuses the singleton `Home` tab; while `Home` is active, the tab strip remains visible and the document toolbar hides.
+
 ### Core Layout Wireframe
 
 ```text
@@ -196,6 +205,9 @@ Apply `.agents/skills/frontend-design/SKILL.md` (two-pass design plan + self-cri
 - **TOC drawer**: Collapsible left pane (~240–260px), closed by default when opening a document (per-tab outline cache, synced to active tab).
 - **Search bar**: Compact floating/inline bar tucked cleanly at top-right beneath the toolbar when `Ctrl+F` is active (`[query input]  3 / 24  [<] [>] [x]`), scoped to the active tab.
 - **Empty state**: Shown when 0 tabs are open (tab strip & document toolbar hidden). Centered quiet drop target with `Open PDF` primary action, hint for drag-and-drop (`Ctrl+O`), and a crisp borderless/hairline recent files list below when history exists.
+
+> [!NOTE]
+> **Amended by [CR-001](changes/001-tab-add-home-screen.md#4-ui-shell-and-visual-behavior)**: The Home screen (`#empty-state`) is also displayed inside the singleton `Home` tab beneath the visible tab strip while other document tabs remain open.
 
 ### Frontend Module Structure (`src/`)
 ```text
@@ -237,6 +249,9 @@ src/
 | `Ctrl+Wheel` | Smooth step zoom |
 | `PageDown` / `PageUp` / `Home` / `End` | Scroll/navigate active document |
 | `Esc` | Close search bar or blur active toolbar input |
+
+> [!NOTE]
+> **Amended by [CR-001](changes/001-tab-add-home-screen.md#5-keyboard-shortcuts-and-focus-rules)**: `Ctrl+W`, `Ctrl+Tab`/`Ctrl+Shift+Tab`, and `Ctrl+1..9` include the singleton `Home` tab when open; document-only shortcuts remain inactive while `Home` is active.
 
 ---
 

@@ -15,7 +15,7 @@ import {
 import { createEmptyState, formatOpenError } from "./empty-state.js";
 import { createSearchController } from "./search.js";
 import { installShortcuts } from "./shortcuts.js";
-import { createTabManager } from "./tabs.js";
+import { HOME_TAB_ID, createTabManager } from "./tabs.js";
 import { createTextLayer } from "./text-layer.js";
 import { createTocDrawer } from "./toc.js";
 import { createToolbar, getNextZoomStep } from "./toolbar.js";
@@ -29,7 +29,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
 async function bootstrap() {
   const appChromeEl = document.getElementById("app-chrome");
+  const toolbarEl = document.getElementById("toolbar");
   const emptyStateEl = document.getElementById("empty-state");
+  const emptyOpenBtnEl = document.getElementById("empty-open-btn");
   const readerShellEl = document.getElementById("reader-shell");
   const dropOverlayEl = document.getElementById("drop-overlay");
 
@@ -77,7 +79,7 @@ async function bootstrap() {
   noticeDismissBtnEl.addEventListener("click", () => {
     const wasFocused = document.activeElement === noticeDismissBtnEl;
     hideNotice();
-    if (wasFocused && tabManager.getActive()) {
+    if (wasFocused && tabManager.getActiveDocument()) {
       viewport.focus();
     }
   });
@@ -86,7 +88,7 @@ async function bootstrap() {
     const action = pendingNoticeAction;
     hideNotice();
     action?.();
-    if (wasFocused && tabManager.getActive()) {
+    if (wasFocused && tabManager.getActiveDocument()) {
       viewport.focus();
     }
   });
@@ -138,15 +140,21 @@ async function bootstrap() {
   }
 
   function updateShellMode() {
-    const hasOpenTabs = !tabManager.isEmpty();
-    appChromeEl.hidden = !hasOpenTabs;
-    readerShellEl.hidden = !hasOpenTabs;
-    emptyStateEl.hidden = hasOpenTabs;
+    const hasAnyTabs = !tabManager.isEmpty();
+    const activeDoc = tabManager.getActiveDocument();
+    const isHomeTab = tabManager.isHomeActive();
 
-    if (hasOpenTabs) {
+    appChromeEl.hidden = !hasAnyTabs;
+    toolbarEl.hidden = !activeDoc;
+    readerShellEl.hidden = !activeDoc;
+    emptyStateEl.hidden = Boolean(activeDoc);
+
+    if (activeDoc) {
       emptyState.clearError();
-      const active = tabManager.getActive();
-      document.title = active ? `${active.title} — Reader` : "Reader";
+      document.title = `${activeDoc.title} — Reader`;
+    } else if (isHomeTab) {
+      hideNotice();
+      document.title = "Home — Reader";
     } else {
       hideNotice();
       document.title = "Reader";
@@ -168,7 +176,7 @@ async function bootstrap() {
   }
 
   function handleToggleToc() {
-    const active = tabManager.getActive();
+    const active = tabManager.getActiveDocument();
     if (!active) {
       return;
     }
@@ -190,7 +198,7 @@ async function bootstrap() {
       }
     },
     onClose: () => {
-      const active = tabManager.getActive();
+      const active = tabManager.getActiveDocument();
       if (!active || !active.tocOpen) {
         return;
       }
@@ -213,7 +221,7 @@ async function bootstrap() {
       viewport.scrollToPage(pageIndex);
     },
     onStepZoom: (direction) => {
-      const active = tabManager.getActive();
+      const active = tabManager.getActiveDocument();
       if (!active) {
         return;
       }
@@ -226,7 +234,7 @@ async function bootstrap() {
       handleToggleToc();
     },
     onToggleSearch: () => {
-      const active = tabManager.getActive();
+      const active = tabManager.getActiveDocument();
       if (active) {
         search.toggleForTab(active);
       }
@@ -246,7 +254,7 @@ async function bootstrap() {
     trackEl: viewportTrackEl,
     textLayer,
     onViewStateChange: (snapshot) => {
-      const active = tabManager.getActive();
+      const active = tabManager.getActiveDocument();
       if (!active || active.documentId !== snapshot.documentId) {
         return;
       }
@@ -258,21 +266,21 @@ async function bootstrap() {
 
   const search = createSearchController({
     barEl: searchBarEl,
-    getActiveTab: () => tabManager.getActive(),
+    getActiveTab: () => tabManager.getActiveDocument(),
     isTabOpen: (documentId) => Boolean(tabManager.getById(documentId)),
     onMatchesUpdated: (tab) => {
-      if (tabManager.getActive()?.documentId === tab.documentId) {
+      if (tabManager.getActiveDocument()?.documentId === tab.documentId) {
         viewport.syncSearchHighlights();
       }
     },
     onActiveMatchChanged: (tab, match) => {
-      if (tabManager.getActive()?.documentId === tab.documentId && match) {
+      if (tabManager.getActiveDocument()?.documentId === tab.documentId && match) {
         viewport.syncSearchHighlights();
         viewport.scrollToNormalizedRect(match.page_index, match.rects[0]);
       }
     },
     onVisibilityChanged: (tab) => {
-      if (tabManager.getActive()?.documentId === tab.documentId) {
+      if (tabManager.getActiveDocument()?.documentId === tab.documentId) {
         syncToolbarForTab(tab);
       }
     },
@@ -284,19 +292,19 @@ async function bootstrap() {
   const tabManager = createTabManager({
     tabListEl: document.getElementById("tab-list"),
     addBtnEl: document.getElementById("tab-add-btn"),
-    onSelectTab: (documentId) => {
-      switchToTab(documentId);
+    onSelectTab: (tabId) => {
+      switchToTab(tabId);
     },
-    onCloseTab: (documentId) => {
-      void handleCloseTab(documentId);
+    onCloseTab: (tabId) => {
+      void handleCloseTab(tabId);
     },
-    onOpenNew: () => {
-      void handleOpenViaDialog();
+    onOpenHome: () => {
+      void handleOpenHomeTab();
     },
   });
 
   const emptyState = createEmptyState({
-    openBtnEl: document.getElementById("empty-open-btn"),
+    openBtnEl: emptyOpenBtnEl,
     errorBoxEl: document.getElementById("empty-error"),
     errorMsgEl: document.getElementById("empty-error-message"),
     errorActionBtnEl: document.getElementById("empty-error-action"),
@@ -314,25 +322,63 @@ async function bootstrap() {
     },
   });
 
-  function switchToTab(documentId) {
+  async function handleOpenHomeTab() {
+    const currentDoc = tabManager.getActiveDocument();
+    const alreadyOnHome = tabManager.isHomeActive();
+
+    if (currentDoc) {
+      toolbar.cancelPageInput();
+      toc.captureScroll(currentDoc);
+      const snap = viewport.captureActiveSnapshot();
+      if (snap) {
+        scheduleSave(currentDoc);
+      }
+      viewport.unmount();
+      toc.clear();
+      search.syncTab(null);
+    }
+
+    tabManager.openHomeTab({ returnToTabId: currentDoc?.tabId ?? null });
+    updateShellMode();
+
+    if (currentDoc) {
+      await flushPendingSave();
+    }
+    if (!alreadyOnHome) {
+      void refreshRecents();
+    }
+    emptyOpenBtnEl?.focus();
+  }
+
+  function switchToTab(tabId) {
     const current = tabManager.getActive();
-    if (current && current.documentId === documentId) {
+    if (current && current.tabId === tabId) {
       return;
     }
 
-    toolbar.cancelPageInput();
+    const target = tabManager.getByTabId(tabId);
+    if (!target) {
+      return;
+    }
 
-    if (current) {
-      toc.captureScroll(current);
+    if (target.kind === "home") {
+      void handleOpenHomeTab();
+      return;
+    }
+
+    const currentDoc = tabManager.getActiveDocument();
+    if (currentDoc) {
+      toolbar.cancelPageInput();
+      toc.captureScroll(currentDoc);
       const snap = viewport.captureActiveSnapshot();
       if (snap) {
-        scheduleSave(current);
+        scheduleSave(currentDoc);
       }
       void flushPendingSave();
     }
 
-    const next = tabManager.setActive(documentId);
-    if (!next) {
+    const next = tabManager.setActive(tabId);
+    if (!next || next.kind !== "document") {
       return;
     }
 
@@ -359,21 +405,23 @@ async function bootstrap() {
     inFlightOpenPaths.add(trimmed);
     try {
       const response = await openDocument(path);
-      const existingActive = tabManager.getActive();
+      const existingActiveDoc = tabManager.getActiveDocument();
 
-      if (existingActive && existingActive.documentId !== response.document_id) {
+      if (existingActiveDoc && existingActiveDoc.documentId !== response.document_id) {
         toolbar.cancelPageInput();
-        toc.captureScroll(existingActive);
+        toc.captureScroll(existingActiveDoc);
         viewport.captureActiveSnapshot();
-        scheduleSave(existingActive);
+        scheduleSave(existingActiveDoc);
         void flushPendingSave();
       }
 
-      const tab = tabManager.upsertFromOpenResponse(response);
+      const tab = tabManager.upsertFromOpenResponse(response, {
+        replaceHomeIfActive: tabManager.isHomeActive(),
+      });
       const wasSameActive =
-        existingActive && existingActive.documentId === tab.documentId;
+        existingActiveDoc && existingActiveDoc.documentId === tab.documentId;
 
-      tabManager.setActive(tab.documentId);
+      tabManager.setActive(tab.tabId);
       updateShellMode();
 
       if (!wasSameActive) {
@@ -396,7 +444,7 @@ async function bootstrap() {
           }
         : {};
 
-      if (tabManager.isEmpty()) {
+      if (!tabManager.getActiveDocument()) {
         emptyState.showError(formatted.message, actionOptions);
       } else {
         showNotice(formatted.message, actionOptions);
@@ -423,8 +471,8 @@ async function bootstrap() {
       }
     }
 
-    // Preserve batch error feedback if a later valid file transitioned out of the empty state.
-    if (lastError && !tabManager.isEmpty()) {
+    // Preserve batch error feedback if a later valid file transitioned into a document tab.
+    if (lastError && tabManager.getActiveDocument()) {
       showNotice(lastError.message, lastError.actionOptions);
     }
   }
@@ -435,7 +483,7 @@ async function bootstrap() {
       await openPathBatch(paths);
     } catch (err) {
       const formatted = formatOpenError(err);
-      if (tabManager.isEmpty()) {
+      if (!tabManager.getActiveDocument()) {
         emptyState.showError(formatted.message);
       } else {
         showNotice(formatted.message);
@@ -443,18 +491,34 @@ async function bootstrap() {
     }
   }
 
-  async function handleCloseTab(documentId) {
-    if (closingTabIds.has(documentId)) {
+  async function handleCloseTab(tabId) {
+    const target = tabManager.getByTabId(tabId);
+    if (!target) {
       return;
     }
-    const target = tabManager.getById(documentId);
-    if (!target) {
+
+    // Closing the singleton Home tab requires no backend IPC.
+    if (target.kind === "home") {
+      const wasActive = tabManager.isHomeActive();
+      const { nextActive } = tabManager.remove(HOME_TAB_ID);
+      updateShellMode();
+      if (wasActive && nextActive && nextActive.kind === "document") {
+        toc.syncTab(nextActive);
+        search.syncTab(nextActive);
+        viewport.mountTab(nextActive);
+        viewport.focus();
+      }
+      return;
+    }
+
+    const documentId = target.documentId;
+    if (closingTabIds.has(documentId)) {
       return;
     }
     closingTabIds.add(documentId);
 
     const active = tabManager.getActive();
-    const closingActive = active && active.documentId === documentId;
+    const closingActive = active && active.tabId === tabId;
 
     if (closingActive) {
       toolbar.cancelPageInput();
@@ -477,14 +541,21 @@ async function bootstrap() {
       zoomScale: target.zoomScale,
     };
 
-    const { nextActive } = tabManager.remove(documentId);
+    const { nextActive } = tabManager.remove(tabId);
     updateShellMode();
 
     if (closingActive && nextActive) {
-      toc.syncTab(nextActive);
-      search.syncTab(nextActive);
-      viewport.mountTab(nextActive);
-      viewport.focus();
+      if (nextActive.kind === "document") {
+        toc.syncTab(nextActive);
+        search.syncTab(nextActive);
+        viewport.mountTab(nextActive);
+        viewport.focus();
+      } else {
+        toc.clear();
+        search.syncTab(null);
+        void refreshRecents();
+        emptyOpenBtnEl?.focus();
+      }
     } else if (tabManager.isEmpty()) {
       toc.clear();
       search.clear();
@@ -503,7 +574,7 @@ async function bootstrap() {
         console.error(`Failed to close document ${documentId}:`, err);
       }
 
-      if (tabManager.isEmpty()) {
+      if (!tabManager.getActiveDocument()) {
         await refreshRecents();
       }
     } finally {
@@ -525,46 +596,47 @@ async function bootstrap() {
     isInsideToc: (el) => toc.containsElement(el),
     isInsideSearch: (el) => search.containsElement(el),
     hasActiveTab: () => Boolean(tabManager.getActive()),
-    isSearchOpen: () => search.isOpenForTab(tabManager.getActive()),
+    hasActiveDocument: () => Boolean(tabManager.getActiveDocument()),
+    isSearchOpen: () => search.isOpenForTab(tabManager.getActiveDocument()),
     onOpenFile: () => {
       void handleOpenViaDialog();
     },
     onCloseActiveTab: () => {
       const active = tabManager.getActive();
       if (active) {
-        void handleCloseTab(active.documentId);
+        void handleCloseTab(active.tabId);
       }
     },
     onSwitchAdjacentTab: (delta) => {
-      const nextId = tabManager.getAdjacentDocumentId(delta);
+      const nextId = tabManager.getAdjacentTabId(delta);
       if (nextId !== null) {
         switchToTab(nextId);
       }
     },
     onJumpToTabNumber: (digit) => {
-      const targetId = tabManager.getDocumentIdAtShortcutIndex(digit);
+      const targetId = tabManager.getTabIdAtShortcutIndex(digit);
       if (targetId !== null) {
         switchToTab(targetId);
       }
     },
     onOpenSearch: () => {
-      const active = tabManager.getActive();
+      const active = tabManager.getActiveDocument();
       if (active) {
         search.openForTab(active);
       }
     },
     onCloseSearch: () => {
-      const active = tabManager.getActive();
+      const active = tabManager.getActiveDocument();
       search.closeForTab(active, { focusViewport: true });
     },
     onNextSearchMatch: () => {
-      const active = tabManager.getActive();
+      const active = tabManager.getActiveDocument();
       if (active) {
         search.stepMatch(active, 1);
       }
     },
     onPrevSearchMatch: () => {
-      const active = tabManager.getActive();
+      const active = tabManager.getActiveDocument();
       if (active) {
         search.stepMatch(active, -1);
       }
@@ -576,7 +648,7 @@ async function bootstrap() {
       handleToggleToc();
     },
     onZoomStep: (direction) => {
-      const active = tabManager.getActive();
+      const active = tabManager.getActiveDocument();
       if (!active) {
         return;
       }
@@ -601,14 +673,14 @@ async function bootstrap() {
       if (focused instanceof HTMLElement && focused !== viewportEl) {
         focused.blur();
       }
-      if (tabManager.getActive()) {
+      if (tabManager.getActiveDocument()) {
         viewport.focus();
       }
     },
   });
 
   window.addEventListener("beforeunload", () => {
-    const active = tabManager.getActive();
+    const active = tabManager.getActiveDocument();
     if (active) {
       viewport.captureActiveSnapshot();
       pendingSavePayload = {

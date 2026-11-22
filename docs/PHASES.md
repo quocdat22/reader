@@ -2,6 +2,9 @@
 
 Execute phases sequentially. Complete every item in a phase's **Exit Gate** before moving to the next phase. Always obey [AGENTS.md](../AGENTS.md) and [docs/SPEC.md](SPEC.md).
 
+> [!NOTE]
+> This roadmap is the frozen v1 baseline. Post-v1 upgrades and behavioral changes are tracked in [docs/CHANGES.md](CHANGES.md) without altering baseline items below.
+
 ---
 
 ## Phase 0: Foundation, Tooling & MuPDF Build Setup
@@ -89,6 +92,9 @@ Execute phases sequentially. Complete every item in a phase's **Exit Gate** befo
     - Smooth continuous scroll through a large multi-hundred-page PDF; memory stays bounded.
     - Crisp HiDPI rendering on fit-width, fit-page, and custom zoom levels; page & zoom restore on reopen.
   - Visual self-critique pass completed against `frontend-design` (zero template tells, clean spacing/hierarchy).
+
+> [!NOTE]
+> **Amended by [CR-001](changes/001-tab-add-home-screen.md#7-verification-checklist)**: In Phase 3 Task 4 and Exit Gate above, the `+` tab button (`tab-add-btn`) now opens a singleton `Home` tab showing the Home screen instead of invoking the file dialog directly; see CR-001 for the updated verification checklist.
 
 ---
 
