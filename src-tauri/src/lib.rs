@@ -1,5 +1,9 @@
 //! Backend library for the Reader desktop document viewer.
 
+pub mod backend;
+pub mod error;
+pub mod worker;
+
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {name}! You've been greeted from Rust!")
