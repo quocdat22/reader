@@ -1,14 +1,20 @@
-// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
+//! Backend library for the Reader desktop document viewer.
+
 #[tauri::command]
 fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
+    format!("Hello, {name}! You've been greeted from Rust!")
 }
 
+/// Starts the Reader Tauri desktop application.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
+    let result = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![greet])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .run(tauri::generate_context!());
+
+    if let Err(err) = result {
+        eprintln!("failed to run reader application: {err}");
+        std::process::exit(1);
+    }
 }
