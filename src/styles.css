@@ -28,6 +28,10 @@
   --error-bg: #FDF2F1;
   --error-border: rgba(154, 30, 21, 0.24);
 
+  --selection-bg: rgba(30, 77, 183, 0.24);
+  --search-hit-bg: rgba(230, 168, 24, 0.26);
+  --search-hit-active-bg: rgba(230, 154, 16, 0.44);
+
   --font-ui: "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
   --radius-sm: 4px;
   --radius-md: 6px;
@@ -912,9 +916,71 @@ input:focus-visible,
 
 .search-bar {
   position: absolute;
-  top: 10px;
-  right: 18px;
+  top: 8px;
+  right: 24px;
   z-index: 15;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 34px;
+  max-width: calc(100% - 36px);
+  padding: 0 6px;
+  background-color: var(--surface-paper);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: 0 2px 8px rgba(26, 31, 43, 0.12);
+}
+
+.search-input {
+  flex: 1 1 176px;
+  width: 176px;
+  min-width: 88px;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-primary);
+  font-size: 12.5px;
+  user-select: text;
+}
+
+.search-input::placeholder {
+  color: var(--ink-muted);
+}
+
+.search-input:focus {
+  border-color: var(--accent-cobalt);
+}
+
+.search-input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+}
+
+.search-count {
+  flex: 0 0 auto;
+  min-width: 42px;
+  padding: 0 4px;
+  text-align: right;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-muted);
+  white-space: nowrap;
+}
+
+.search-count--empty {
+  color: var(--ink-muted);
+}
+
+.search-count--error {
+  color: var(--error-ink);
+}
+
+.search-nav-group {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
 }
 
 .viewport {
@@ -940,12 +1006,67 @@ input:focus-visible,
   box-shadow: var(--sheet-shadow);
   contain: layout style size;
   overflow: hidden;
+  user-select: none;
 }
 
 .page-canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
   display: block;
   width: 100%;
   height: 100%;
+  pointer-events: none;
+  user-select: none;
+}
+
+.search-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  user-select: none;
+  mix-blend-mode: multiply;
+}
+
+.search-hit {
+  position: absolute;
+  border-radius: 2px;
+  background-color: var(--search-hit-bg);
+}
+
+.search-hit--active {
+  background-color: var(--search-hit-active-bg);
+  outline: 1.5px solid var(--accent-cobalt);
+}
+
+.text-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 3;
+  overflow: hidden;
+  transform-origin: 0 0;
+  pointer-events: none;
+  user-select: none;
+}
+
+.text-span {
+  position: absolute;
+  color: transparent;
+  font-family: "Segoe UI", Arial, sans-serif;
+  font-weight: 400;
+  line-height: 1.15;
+  white-space: pre;
+  transform-origin: 0 0;
+  pointer-events: auto;
+  user-select: text;
+  cursor: text;
+}
+
+.text-span::selection {
+  background-color: var(--selection-bg);
+  color: transparent;
 }
 
 /* Drag-and-Drop Overlay */
@@ -1025,6 +1146,15 @@ input:focus-visible,
     z-index: 18;
     width: min(252px, 78vw);
     box-shadow: 2px 0 12px rgba(26, 31, 43, 0.14);
+  }
+
+  .search-bar {
+    right: 18px;
+    max-width: calc(100% - 28px);
+  }
+
+  .search-input {
+    width: 132px;
   }
 }
 

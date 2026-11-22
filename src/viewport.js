@@ -89,10 +89,17 @@ function findLastPageAtOrBefore(offsets, y) {
  * @param {{
  *   viewportEl: HTMLElement,
  *   trackEl: HTMLElement,
+ *   textLayer?: {
+ *     syncVisibleRange: (args: any) => void,
+ *     evictOutside: (keepMin: number, keepMax: number, slotElements: Array<HTMLDivElement>) => void,
+ *     rescaleMounted: (slotElements: Array<HTMLDivElement>, pageOffsets: Array<any>, pageDimensions: Array<any>) => void,
+ *     clearActiveSelection: () => void,
+ *     clearMounted: () => void,
+ *   },
  *   onViewStateChange: (snapshot: { documentId: number, pageIndex: number, scrollTop: number, zoomMode: "fit_width" | "fit_page" | "custom", zoomScale: number }) => void,
  * }} options
  */
-export function createViewport({ viewportEl, trackEl, onViewStateChange }) {
+export function createViewport({ viewportEl, trackEl, textLayer, onViewStateChange }) {
   /** @type {any | null} */
   let activeTab = null;
   /** @type {Array<{ top: number, height: number, width: number, widthPx: number, heightPx: number }>} */
@@ -101,6 +108,8 @@ export function createViewport({ viewportEl, trackEl, onViewStateChange }) {
   let slotElements = [];
   /** @type {Map<number, { canvas: HTMLCanvasElement, epoch: number }>} */
   const renderedCanvases = new Map();
+  /** @type {Map<number, HTMLElement>} */
+  const searchLayers = new Map();
   /** @type {Set<number>} */
   const inFlightPages = new Set();
   /** @type {Array<number>} */
@@ -253,6 +262,79 @@ export function createViewport({ viewportEl, trackEl, onViewStateChange }) {
     return { firstVisible, lastVisible, activePageIndex };
   }
 
+  function clearSearchLayer(pageIndex) {
+    const layer = searchLayers.get(pageIndex);
+    if (layer) {
+      layer.remove();
+      searchLayers.delete(pageIndex);
+    }
+  }
+
+  function clearAllSearchLayers() {
+    for (const layer of searchLayers.values()) {
+      layer.remove();
+    }
+    searchLayers.clear();
+  }
+
+  function renderPageSearchLayer(pageIndex) {
+    const slot = slotElements[pageIndex];
+    const searchState = activeTab?.searchState;
+    if (!slot || !searchState?.open) {
+      clearSearchLayer(pageIndex);
+      return;
+    }
+
+    const pageMatches = searchState.matchesByPage?.get(pageIndex);
+    if (!pageMatches || pageMatches.length === 0) {
+      clearSearchLayer(pageIndex);
+      return;
+    }
+
+    let layerEl = searchLayers.get(pageIndex);
+    if (!layerEl) {
+      layerEl = document.createElement("div");
+      layerEl.className = "search-layer";
+      layerEl.setAttribute("aria-hidden", "true");
+      slot.appendChild(layerEl);
+      searchLayers.set(pageIndex, layerEl);
+    } else {
+      layerEl.textContent = "";
+    }
+
+    const fragment = document.createDocumentFragment();
+    for (const entry of pageMatches) {
+      const isActive = entry.matchIndex === searchState.currentIndex;
+      for (const rect of entry.rects) {
+        const hitEl = document.createElement("div");
+        hitEl.className = isActive ? "search-hit search-hit--active" : "search-hit";
+        hitEl.style.left = `${(rect.x * 100).toFixed(4)}%`;
+        hitEl.style.top = `${(rect.y * 100).toFixed(4)}%`;
+        hitEl.style.width = `${(rect.width * 100).toFixed(4)}%`;
+        hitEl.style.height = `${(rect.height * 100).toFixed(4)}%`;
+        fragment.appendChild(hitEl);
+      }
+    }
+    layerEl.appendChild(fragment);
+  }
+
+  function syncSearchLayersForRange(renderMin, renderMax) {
+    if (!activeTab?.searchState?.open || activeTab.searchState.matches.length === 0) {
+      clearAllSearchLayers();
+      return;
+    }
+
+    for (const pageIndex of Array.from(searchLayers.keys())) {
+      if (pageIndex < renderMin || pageIndex > renderMax) {
+        clearSearchLayer(pageIndex);
+      }
+    }
+
+    for (let i = renderMin; i <= renderMax; i += 1) {
+      renderPageSearchLayer(i);
+    }
+  }
+
   function evictDistantCanvases(firstVisible, lastVisible) {
     const keepMin = Math.max(0, firstVisible - EVICT_RADIUS);
     const keepMax = Math.min(pageOffsets.length - 1, lastVisible + EVICT_RADIUS);
@@ -263,6 +345,14 @@ export function createViewport({ viewportEl, trackEl, onViewStateChange }) {
         renderedCanvases.delete(pageIndex);
       }
     }
+
+    for (const pageIndex of Array.from(searchLayers.keys())) {
+      if (pageIndex < keepMin || pageIndex > keepMax) {
+        clearSearchLayer(pageIndex);
+      }
+    }
+
+    textLayer?.evictOutside(keepMin, keepMax, slotElements);
   }
 
   function drainRenderQueue() {
@@ -365,6 +455,17 @@ export function createViewport({ viewportEl, trackEl, onViewStateChange }) {
     const renderMin = Math.max(0, firstVisible - OVERSCAN_RADIUS);
     const renderMax = Math.min(pageOffsets.length - 1, lastVisible + OVERSCAN_RADIUS);
 
+    syncSearchLayersForRange(renderMin, renderMax);
+    textLayer?.syncVisibleRange({
+      tab: activeTab,
+      firstVisible,
+      lastVisible,
+      renderMin,
+      renderMax,
+      slotElements,
+      pageOffsets,
+    });
+
     /** @type {Array<{ pageIndex: number, priority: number }>} */
     const needed = [];
     for (let i = renderMin; i <= renderMax; i += 1) {
@@ -458,6 +559,7 @@ export function createViewport({ viewportEl, trackEl, onViewStateChange }) {
 
     // Mark existing canvases stale so they stay visible while crisp HiDPI bitmaps render.
     bumpEpoch();
+    textLayer?.rescaleMounted(slotElements, pageOffsets, activeTab.pageDimensions);
     restoreScrollAnchor(anchor);
     notifyViewState(true);
     scheduleVisibleRenders();
@@ -501,6 +603,9 @@ export function createViewport({ viewportEl, trackEl, onViewStateChange }) {
     }
 
     bumpEpoch();
+    textLayer?.clearActiveSelection();
+    textLayer?.clearMounted();
+    clearAllSearchLayers();
     releaseAllCanvases();
     slotElements = [];
     pageOffsets = [];
@@ -765,10 +870,90 @@ export function createViewport({ viewportEl, trackEl, onViewStateChange }) {
 
   observeDprChange();
 
+  function syncSearchHighlights() {
+    if (!activeTab || pageOffsets.length === 0) {
+      clearAllSearchLayers();
+      return;
+    }
+    const { firstVisible, lastVisible } = getVisibleRange();
+    const renderMin = Math.max(0, firstVisible - OVERSCAN_RADIUS);
+    const renderMax = Math.min(pageOffsets.length - 1, lastVisible + OVERSCAN_RADIUS);
+    syncSearchLayersForRange(renderMin, renderMax);
+  }
+
+  function scrollToNormalizedRect(pageIndex, rect) {
+    if (!activeTab || pageOffsets.length === 0) {
+      return;
+    }
+    const clampedPage = Math.max(0, Math.min(pageIndex, pageOffsets.length - 1));
+    const geom = pageOffsets[clampedPage];
+    if (!geom) {
+      return;
+    }
+
+    const trackWidth = computeTrackWidth(currentMaxPageWidth, currentDpr);
+    const slotLeft = snapToDevicePixels(Math.max(0, (trackWidth - geom.width) / 2), currentDpr);
+
+    const safeRect = rect ?? { x: 0, y: 0, width: 0, height: 0 };
+    const matchTop = geom.top + safeRect.y * geom.height;
+    const matchHeight = Math.max(12, safeRect.height * geom.height);
+    const matchBottom = matchTop + matchHeight;
+
+    const matchLeft = slotLeft + safeRect.x * geom.width;
+    const matchWidth = Math.max(12, safeRect.width * geom.width);
+    const matchRight = matchLeft + matchWidth;
+
+    const viewTop = viewportEl.scrollTop;
+    const viewHeight = viewportEl.clientHeight || window.innerHeight || 700;
+    const viewLeft = viewportEl.scrollLeft;
+    const viewWidth = viewportEl.clientWidth || window.innerWidth || 900;
+
+    // Keep clear of the floating top-right search bar (~56px) and bottom edge (~40px).
+    const topMargin = Math.min(56, viewHeight * 0.2);
+    const bottomMargin = Math.min(40, viewHeight * 0.15);
+    const verticallyVisible =
+      matchTop >= viewTop + topMargin && matchBottom <= viewTop + viewHeight - bottomMargin;
+
+    const horizMargin = Math.min(28, viewWidth * 0.1);
+    const horizontallyVisible =
+      matchLeft >= viewLeft + horizMargin && matchRight <= viewLeft + viewWidth - horizMargin;
+
+    if (verticallyVisible && horizontallyVisible) {
+      return;
+    }
+
+    const maxScrollTop = Math.max(0, viewportEl.scrollHeight - viewHeight);
+    const maxScrollLeft = Math.max(0, viewportEl.scrollWidth - viewWidth);
+
+    let targetTop = viewTop;
+    if (!verticallyVisible) {
+      const rawTop = matchTop - viewHeight * 0.38;
+      targetTop = snapToDevicePixels(Math.max(0, Math.min(rawTop, maxScrollTop)), currentDpr);
+    }
+
+    let targetLeft = viewLeft;
+    if (!horizontallyVisible && maxScrollLeft > 0) {
+      const rawLeft = matchLeft + matchWidth / 2 - viewWidth / 2;
+      targetLeft = snapToDevicePixels(Math.max(0, Math.min(rawLeft, maxScrollLeft)), currentDpr);
+    }
+
+    const reducedMotion =
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    viewportEl.scrollTo({
+      top: targetTop,
+      left: targetLeft,
+      behavior: reducedMotion ? "auto" : "smooth",
+    });
+  }
+
   return {
     mountTab,
     unmount,
     scrollToPage,
+    scrollToNormalizedRect,
+    syncSearchHighlights,
     scrollPageStep,
     scrollToStart,
     scrollToEnd,

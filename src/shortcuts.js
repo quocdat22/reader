@@ -70,6 +70,7 @@ function isZoomResetKey(event) {
  * @param {{
  *   viewportEl: HTMLElement,
  *   isInsideToc: (el: EventTarget | null) => boolean,
+ *   isInsideSearch?: (el: EventTarget | null) => boolean,
  *   hasActiveTab: () => boolean,
  *   isSearchOpen?: () => boolean,
  *   onOpenFile: () => void,
@@ -92,6 +93,7 @@ function isZoomResetKey(event) {
 export function installShortcuts({
   viewportEl,
   isInsideToc,
+  isInsideSearch = () => false,
   hasActiveTab,
   isSearchOpen = () => false,
   onOpenFile,
@@ -132,6 +134,10 @@ export function installShortcuts({
 
     // Global Escape handling (works inside inputs, search bar, TOC drawer, or toolbar).
     if (event.key === "Escape" && !primaryMod && !event.altKey && !event.shiftKey) {
+      if (inEditable && !isInsideSearch(target)) {
+        onEscape();
+        return;
+      }
       if (isSearchOpen()) {
         event.preventDefault();
         onCloseSearch?.();
@@ -196,8 +202,9 @@ export function installShortcuts({
       }
 
       if (!event.shiftKey && lower === "f") {
+        // Always prevent WebView2's built-in find bar, even on the empty state.
+        event.preventDefault();
         if (hasActiveTab()) {
-          event.preventDefault();
           onOpenSearch?.();
         }
         return;

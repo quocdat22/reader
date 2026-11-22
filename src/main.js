@@ -13,8 +13,10 @@ import {
   subscribeDragDrop,
 } from "./api.js";
 import { createEmptyState, formatOpenError } from "./empty-state.js";
+import { createSearchController } from "./search.js";
 import { installShortcuts } from "./shortcuts.js";
 import { createTabManager } from "./tabs.js";
+import { createTextLayer } from "./text-layer.js";
 import { createTocDrawer } from "./toc.js";
 import { createToolbar, getNextZoomStep } from "./toolbar.js";
 import { createViewport } from "./viewport.js";
@@ -39,6 +41,7 @@ async function bootstrap() {
   const viewportEl = document.getElementById("viewport");
   const viewportTrackEl = document.getElementById("viewport-track");
   const tocDrawerEl = document.getElementById("toc-drawer");
+  const searchBarEl = document.getElementById("search-bar");
 
   /** @type {ReturnType<typeof setTimeout> | null} */
   let saveTimer = null;
@@ -146,6 +149,7 @@ async function bootstrap() {
       zoomMode: tab.zoomMode,
       zoomScale: tab.zoomScale,
       tocOpen: tab.tocOpen,
+      searchOpen: Boolean(tab.searchState?.open),
     });
   }
 
@@ -207,6 +211,12 @@ async function bootstrap() {
     onToggleToc: () => {
       handleToggleToc();
     },
+    onToggleSearch: () => {
+      const active = tabManager.getActive();
+      if (active) {
+        search.toggleForTab(active);
+      }
+    },
     onOpenNew: () => {
       void handleOpenViaDialog();
     },
@@ -215,9 +225,12 @@ async function bootstrap() {
     },
   });
 
+  const textLayer = createTextLayer({ viewportEl });
+
   const viewport = createViewport({
     viewportEl,
     trackEl: viewportTrackEl,
+    textLayer,
     onViewStateChange: (snapshot) => {
       const active = tabManager.getActive();
       if (!active || active.documentId !== snapshot.documentId) {
@@ -226,6 +239,31 @@ async function bootstrap() {
       syncToolbarForTab(active);
       toc.syncActivePage(active.pageIndex);
       scheduleSave(active);
+    },
+  });
+
+  const search = createSearchController({
+    barEl: searchBarEl,
+    getActiveTab: () => tabManager.getActive(),
+    isTabOpen: (documentId) => Boolean(tabManager.getById(documentId)),
+    onMatchesUpdated: (tab) => {
+      if (tabManager.getActive()?.documentId === tab.documentId) {
+        viewport.syncSearchHighlights();
+      }
+    },
+    onActiveMatchChanged: (tab, match) => {
+      if (tabManager.getActive()?.documentId === tab.documentId && match) {
+        viewport.syncSearchHighlights();
+        viewport.scrollToNormalizedRect(match.page_index, match.rects[0]);
+      }
+    },
+    onVisibilityChanged: (tab) => {
+      if (tabManager.getActive()?.documentId === tab.documentId) {
+        syncToolbarForTab(tab);
+      }
+    },
+    onCloseFocusViewport: () => {
+      viewport.focus();
     },
   });
 
@@ -286,6 +324,7 @@ async function bootstrap() {
 
     updateShellMode();
     toc.syncTab(next);
+    search.syncTab(next);
     viewport.mountTab(next);
     viewport.focus();
   }
@@ -318,6 +357,7 @@ async function bootstrap() {
 
       if (!wasSameActive) {
         toc.syncTab(tab);
+        search.syncTab(tab);
         viewport.mountTab(tab);
       }
 
@@ -399,10 +439,12 @@ async function bootstrap() {
 
     if (closingActive && nextActive) {
       toc.syncTab(nextActive);
+      search.syncTab(nextActive);
       viewport.mountTab(nextActive);
       viewport.focus();
     } else if (tabManager.isEmpty()) {
       toc.clear();
+      search.clear();
       await refreshRecents();
     }
   }
@@ -419,8 +461,9 @@ async function bootstrap() {
   installShortcuts({
     viewportEl,
     isInsideToc: (el) => toc.containsElement(el),
+    isInsideSearch: (el) => search.containsElement(el),
     hasActiveTab: () => Boolean(tabManager.getActive()),
-    isSearchOpen: () => false,
+    isSearchOpen: () => search.isOpenForTab(tabManager.getActive()),
     onOpenFile: () => {
       void handleOpenViaDialog();
     },
@@ -440,6 +483,28 @@ async function bootstrap() {
       const targetId = tabManager.getDocumentIdAtShortcutIndex(digit);
       if (targetId !== null) {
         void switchToTab(targetId);
+      }
+    },
+    onOpenSearch: () => {
+      const active = tabManager.getActive();
+      if (active) {
+        search.openForTab(active);
+      }
+    },
+    onCloseSearch: () => {
+      const active = tabManager.getActive();
+      search.closeForTab(active, { focusViewport: true });
+    },
+    onNextSearchMatch: () => {
+      const active = tabManager.getActive();
+      if (active) {
+        search.stepMatch(active, 1);
+      }
+    },
+    onPrevSearchMatch: () => {
+      const active = tabManager.getActive();
+      if (active) {
+        search.stepMatch(active, -1);
       }
     },
     onFocusPageInput: () => {

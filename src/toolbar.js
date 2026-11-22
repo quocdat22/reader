@@ -50,6 +50,7 @@ export function getNextZoomStep(currentScale, direction) {
  *   onStepZoom: (direction: 1 | -1) => void,
  *   onSetZoomMode: (mode: "fit_width" | "fit_page") => void,
  *   onToggleToc: () => void,
+ *   onToggleSearch?: () => void,
  *   onOpenNew: () => void,
  *   onReturnFocusToViewport?: () => void,
  * }} options
@@ -69,6 +70,7 @@ export function createToolbar({
   onStepZoom,
   onSetZoomMode,
   onToggleToc,
+  onToggleSearch,
   onOpenNew,
   onReturnFocusToViewport,
 }) {
@@ -140,6 +142,10 @@ export function createToolbar({
     onToggleToc();
   });
 
+  searchToggleBtnEl.addEventListener("click", () => {
+    onToggleSearch?.();
+  });
+
   zoomOutBtnEl.addEventListener("click", () => {
     onStepZoom(-1);
   });
@@ -162,9 +168,9 @@ export function createToolbar({
 
   /**
    * Synchronizes all toolbar controls to the active tab's state.
-   * @param {{ pageIndex: number, pageCount: number, zoomMode: "fit_width" | "fit_page" | "custom", zoomScale: number, tocOpen: boolean }} state
+   * @param {{ pageIndex: number, pageCount: number, zoomMode: "fit_width" | "fit_page" | "custom", zoomScale: number, tocOpen: boolean, searchOpen?: boolean }} state
    */
-  function sync({ pageIndex, pageCount, zoomMode, zoomScale, tocOpen }) {
+  function sync({ pageIndex, pageCount, zoomMode, zoomScale, tocOpen, searchOpen = false }) {
     currentPageIndex = pageIndex;
     currentPageCount = pageCount;
 
@@ -183,7 +189,9 @@ export function createToolbar({
     const tocExpanded = String(Boolean(tocOpen));
     tocToggleBtnEl.setAttribute("aria-pressed", tocExpanded);
     tocToggleBtnEl.setAttribute("aria-expanded", tocExpanded);
-    searchToggleBtnEl.setAttribute("aria-pressed", "false");
+    const searchExpanded = String(Boolean(searchOpen));
+    searchToggleBtnEl.setAttribute("aria-pressed", searchExpanded);
+    searchToggleBtnEl.setAttribute("aria-expanded", searchExpanded);
   }
 
   function focusPageInput() {

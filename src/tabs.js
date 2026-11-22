@@ -208,6 +208,7 @@ export function createTabManager({
       tocExpandedIds: null,
       tocScrollTop: 0,
       tocSelectedNodeId: null,
+      textCache: new Map(),
       searchState: null,
     };
 
@@ -236,6 +237,8 @@ export function createTabManager({
     }
 
     const [removed] = tabs.splice(index, 1);
+    removed.textCache?.clear();
+    removed.searchState = null;
 
     if (activeDocumentId === documentId) {
       if (tabs.length === 0) {
