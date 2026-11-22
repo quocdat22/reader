@@ -49,7 +49,9 @@ export function getNextZoomStep(currentScale, direction) {
  *   onJumpToPage: (pageIndex: number) => void,
  *   onStepZoom: (direction: 1 | -1) => void,
  *   onSetZoomMode: (mode: "fit_width" | "fit_page") => void,
+ *   onToggleToc: () => void,
  *   onOpenNew: () => void,
+ *   onReturnFocusToViewport?: () => void,
  * }} options
  */
 export function createToolbar({
@@ -66,13 +68,17 @@ export function createToolbar({
   onJumpToPage,
   onStepZoom,
   onSetZoomMode,
+  onToggleToc,
   onOpenNew,
+  onReturnFocusToViewport,
 }) {
   let currentPageIndex = 0;
   let currentPageCount = 0;
+  let inputDirty = false;
 
   function syncPageInputValue() {
     pageInputEl.value = currentPageCount > 0 ? String(currentPageIndex + 1) : "";
+    inputDirty = false;
   }
 
   function commitPageInput() {
@@ -93,8 +99,20 @@ export function createToolbar({
     onJumpToPage(clampedPageIndex);
   }
 
+  function cancelPageInput() {
+    syncPageInputValue();
+    if (document.activeElement === pageInputEl) {
+      pageInputEl.blur();
+    }
+  }
+
   pageInputEl.addEventListener("focus", () => {
+    inputDirty = false;
     pageInputEl.select();
+  });
+
+  pageInputEl.addEventListener("input", () => {
+    inputDirty = true;
   });
 
   pageInputEl.addEventListener("keydown", (event) => {
@@ -102,15 +120,24 @@ export function createToolbar({
       event.preventDefault();
       commitPageInput();
       pageInputEl.blur();
+      onReturnFocusToViewport?.();
     } else if (event.key === "Escape") {
       event.preventDefault();
-      syncPageInputValue();
-      pageInputEl.blur();
+      cancelPageInput();
+      onReturnFocusToViewport?.();
     }
   });
 
   pageInputEl.addEventListener("blur", () => {
-    commitPageInput();
+    if (inputDirty) {
+      commitPageInput();
+    } else {
+      syncPageInputValue();
+    }
+  });
+
+  tocToggleBtnEl.addEventListener("click", () => {
+    onToggleToc();
   });
 
   zoomOutBtnEl.addEventListener("click", () => {
@@ -153,7 +180,9 @@ export function createToolbar({
 
     fitWidthBtnEl.setAttribute("aria-pressed", String(zoomMode === "fit_width"));
     fitPageBtnEl.setAttribute("aria-pressed", String(zoomMode === "fit_page"));
-    tocToggleBtnEl.setAttribute("aria-pressed", String(Boolean(tocOpen)));
+    const tocExpanded = String(Boolean(tocOpen));
+    tocToggleBtnEl.setAttribute("aria-pressed", tocExpanded);
+    tocToggleBtnEl.setAttribute("aria-expanded", tocExpanded);
     searchToggleBtnEl.setAttribute("aria-pressed", "false");
   }
 
@@ -165,5 +194,6 @@ export function createToolbar({
   return {
     sync,
     focusPageInput,
+    cancelPageInput,
   };
 }

@@ -121,10 +121,31 @@ export function createTabManager({
       });
 
       tabEl.addEventListener("keydown", (event) => {
+        if (event.ctrlKey || event.metaKey || event.altKey) {
+          return;
+        }
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
           if (tab.documentId !== activeDocumentId) {
             onSelectTab(tab.documentId);
+          }
+        } else if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
+          if (tabs.length < 2) {
+            return;
+          }
+          event.preventDefault();
+          const currentIndex = tabs.findIndex((item) => item.documentId === tab.documentId);
+          if (currentIndex === -1) {
+            return;
+          }
+          const delta = event.key === "ArrowRight" ? 1 : -1;
+          const nextIndex = (currentIndex + delta + tabs.length) % tabs.length;
+          const nextTab = tabs[nextIndex];
+          const nextEl = tabListEl.querySelector(
+            `.tab[data-document-id="${nextTab.documentId}"]`,
+          );
+          if (nextEl instanceof HTMLElement) {
+            nextEl.focus();
           }
         }
       });
@@ -181,7 +202,12 @@ export function createTabManager({
       zoomMode,
       zoomScale,
       tocOpen: false,
+      outlineStatus: "idle",
       outlineCache: null,
+      outlineError: null,
+      tocExpandedIds: null,
+      tocScrollTop: 0,
+      tocSelectedNodeId: null,
       searchState: null,
     };
 
@@ -243,6 +269,45 @@ export function createTabManager({
     return tabs.length === 0;
   }
 
+  function count() {
+    return tabs.length;
+  }
+
+  /**
+   * Returns the next (`delta = 1`) or previous (`delta = -1`) tab's `documentId`
+   * with wrap-around, or `null` when fewer than two tabs are open.
+   * @param {1 | -1} delta
+   * @returns {number | null}
+   */
+  function getAdjacentDocumentId(delta) {
+    if (tabs.length < 2) {
+      return null;
+    }
+    const currentIndex = tabs.findIndex((tab) => tab.documentId === activeDocumentId);
+    const startIndex = currentIndex === -1 ? 0 : currentIndex;
+    const nextIndex = (startIndex + delta + tabs.length) % tabs.length;
+    return tabs[nextIndex].documentId;
+  }
+
+  /**
+   * Resolves `Ctrl+1`..`Ctrl+9` to a target `documentId` (`9` selects the last tab).
+   * @param {number} digit
+   * @returns {number | null}
+   */
+  function getDocumentIdAtShortcutIndex(digit) {
+    if (tabs.length === 0 || !Number.isInteger(digit) || digit < 1 || digit > 9) {
+      return null;
+    }
+    if (digit === 9) {
+      return tabs[tabs.length - 1].documentId;
+    }
+    const targetIndex = digit - 1;
+    if (targetIndex >= tabs.length) {
+      return null;
+    }
+    return tabs[targetIndex].documentId;
+  }
+
   return {
     upsertFromOpenResponse,
     setActive,
@@ -251,5 +316,8 @@ export function createTabManager({
     getById,
     getAll,
     isEmpty,
+    count,
+    getAdjacentDocumentId,
+    getDocumentIdAtShortcutIndex,
   };
 }

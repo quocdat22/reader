@@ -13,7 +13,9 @@ import {
   subscribeDragDrop,
 } from "./api.js";
 import { createEmptyState, formatOpenError } from "./empty-state.js";
+import { installShortcuts } from "./shortcuts.js";
 import { createTabManager } from "./tabs.js";
+import { createTocDrawer } from "./toc.js";
 import { createToolbar, getNextZoomStep } from "./toolbar.js";
 import { createViewport } from "./viewport.js";
 
@@ -36,6 +38,7 @@ async function bootstrap() {
 
   const viewportEl = document.getElementById("viewport");
   const viewportTrackEl = document.getElementById("viewport-track");
+  const tocDrawerEl = document.getElementById("toc-drawer");
 
   /** @type {ReturnType<typeof setTimeout> | null} */
   let saveTimer = null;
@@ -133,6 +136,50 @@ async function bootstrap() {
     }
   }
 
+  function syncToolbarForTab(tab) {
+    if (!tab) {
+      return;
+    }
+    toolbar.sync({
+      pageIndex: tab.pageIndex,
+      pageCount: tab.pageCount,
+      zoomMode: tab.zoomMode,
+      zoomScale: tab.zoomScale,
+      tocOpen: tab.tocOpen,
+    });
+  }
+
+  function handleToggleToc() {
+    const active = tabManager.getActive();
+    if (!active) {
+      return;
+    }
+    const wasFocusedInToc = toc.containsElement(document.activeElement);
+    active.tocOpen = !active.tocOpen;
+    toc.syncTab(active);
+    syncToolbarForTab(active);
+    if (!active.tocOpen && wasFocusedInToc) {
+      viewport.focus();
+    }
+  }
+
+  const toc = createTocDrawer({
+    drawerEl: tocDrawerEl,
+    onJumpToPage: (pageIndex, { fromKeyboard }) => {
+      viewport.scrollToPage(pageIndex);
+      if (!fromKeyboard) {
+        viewport.focus();
+      }
+    },
+    onClose: () => {
+      const active = tabManager.getActive();
+      if (!active || !active.tocOpen) {
+        return;
+      }
+      handleToggleToc();
+    },
+  });
+
   const toolbar = createToolbar({
     pageInputEl: document.getElementById("page-input"),
     pageTotalEl: document.getElementById("page-total"),
@@ -157,8 +204,14 @@ async function bootstrap() {
     onSetZoomMode: (mode) => {
       viewport.setZoomMode(mode);
     },
+    onToggleToc: () => {
+      handleToggleToc();
+    },
     onOpenNew: () => {
       void handleOpenViaDialog();
+    },
+    onReturnFocusToViewport: () => {
+      viewport.focus();
     },
   });
 
@@ -170,13 +223,8 @@ async function bootstrap() {
       if (!active || active.documentId !== snapshot.documentId) {
         return;
       }
-      toolbar.sync({
-        pageIndex: active.pageIndex,
-        pageCount: active.pageCount,
-        zoomMode: active.zoomMode,
-        zoomScale: active.zoomScale,
-        tocOpen: active.tocOpen,
-      });
+      syncToolbarForTab(active);
+      toc.syncActivePage(active.pageIndex);
       scheduleSave(active);
     },
   });
@@ -220,7 +268,10 @@ async function bootstrap() {
       return;
     }
 
+    toolbar.cancelPageInput();
+
     if (current) {
+      toc.captureScroll(current);
       const snap = viewport.captureActiveSnapshot();
       if (snap) {
         scheduleSave(current);
@@ -234,8 +285,9 @@ async function bootstrap() {
     }
 
     updateShellMode();
+    toc.syncTab(next);
     viewport.mountTab(next);
-    viewportEl.focus({ preventScroll: true });
+    viewport.focus();
   }
 
   async function handleOpenPath(path, options = {}) {
@@ -250,6 +302,8 @@ async function bootstrap() {
       const existingActive = tabManager.getActive();
 
       if (existingActive && existingActive.documentId !== response.document_id) {
+        toolbar.cancelPageInput();
+        toc.captureScroll(existingActive);
         viewport.captureActiveSnapshot();
         scheduleSave(existingActive);
         await flushPendingSave();
@@ -263,10 +317,11 @@ async function bootstrap() {
       updateShellMode();
 
       if (!wasSameActive) {
+        toc.syncTab(tab);
         viewport.mountTab(tab);
       }
 
-      viewportEl.focus({ preventScroll: true });
+      viewport.focus();
       void refreshRecents();
     } catch (err) {
       const formatted = formatOpenError(err, options);
@@ -313,6 +368,8 @@ async function bootstrap() {
     const closingActive = active && active.documentId === documentId;
 
     if (closingActive) {
+      toolbar.cancelPageInput();
+      toc.captureScroll(target);
       viewport.captureActiveSnapshot();
       scheduleSave(target);
       await flushPendingSave();
@@ -341,11 +398,11 @@ async function bootstrap() {
     updateShellMode();
 
     if (closingActive && nextActive) {
+      toc.syncTab(nextActive);
       viewport.mountTab(nextActive);
-      viewportEl.focus({ preventScroll: true });
-    }
-
-    if (tabManager.isEmpty()) {
+      viewport.focus();
+    } else if (tabManager.isEmpty()) {
+      toc.clear();
       await refreshRecents();
     }
   }
@@ -359,42 +416,69 @@ async function bootstrap() {
     }
   }
 
-  // Phase 3 baseline desktop interactions (full shortcut router arrives in Phase 4).
-  window.addEventListener("keydown", (event) => {
-    const modifier = event.ctrlKey || event.metaKey;
-    if (!modifier || event.altKey) {
-      return;
-    }
-
-    const key = event.key.toLowerCase();
-    if (key === "o") {
-      event.preventDefault();
+  installShortcuts({
+    viewportEl,
+    isInsideToc: (el) => toc.containsElement(el),
+    hasActiveTab: () => Boolean(tabManager.getActive()),
+    isSearchOpen: () => false,
+    onOpenFile: () => {
       void handleOpenViaDialog();
-    } else if (key === "w") {
+    },
+    onCloseActiveTab: () => {
       const active = tabManager.getActive();
       if (active) {
-        event.preventDefault();
         void handleCloseTab(active.documentId);
       }
-    }
-  });
-
-  viewportEl.addEventListener(
-    "wheel",
-    (event) => {
-      if (!(event.ctrlKey || event.metaKey)) {
-        return;
+    },
+    onSwitchAdjacentTab: (delta) => {
+      const nextId = tabManager.getAdjacentDocumentId(delta);
+      if (nextId !== null) {
+        void switchToTab(nextId);
       }
+    },
+    onJumpToTabNumber: (digit) => {
+      const targetId = tabManager.getDocumentIdAtShortcutIndex(digit);
+      if (targetId !== null) {
+        void switchToTab(targetId);
+      }
+    },
+    onFocusPageInput: () => {
+      toolbar.focusPageInput();
+    },
+    onToggleToc: () => {
+      handleToggleToc();
+    },
+    onZoomStep: (direction) => {
       const active = tabManager.getActive();
       if (!active) {
         return;
       }
-      event.preventDefault();
-      const direction = event.deltaY < 0 ? 1 : -1;
       viewport.setCustomZoom(getNextZoomStep(active.zoomScale, direction));
     },
-    { passive: false },
-  );
+    onResetZoom: () => {
+      viewport.setZoomMode("fit_width");
+    },
+    onNavigateViewport: (action) => {
+      if (action === "page_down") {
+        viewport.scrollPageStep(1);
+      } else if (action === "page_up") {
+        viewport.scrollPageStep(-1);
+      } else if (action === "home") {
+        viewport.scrollToStart();
+      } else if (action === "end") {
+        viewport.scrollToEnd();
+      }
+    },
+    onEscape: () => {
+      const focused = document.activeElement;
+      if (focused instanceof HTMLElement && focused !== viewportEl) {
+        focused.blur();
+      }
+      if (tabManager.getActive()) {
+        viewport.focus();
+      }
+    },
+  });
 
   window.addEventListener("beforeunload", () => {
     const active = tabManager.getActive();

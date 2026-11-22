@@ -196,9 +196,22 @@ export function createViewport({ viewportEl, trackEl, onViewStateChange }) {
       findLastPageAtOrBefore(pageOffsets, viewBottom),
     );
 
-    const anchorY = viewTop + viewHeight * 0.35;
-    let activePageIndex = findFirstPageAtOrAfter(pageOffsets, anchorY);
-    activePageIndex = Math.max(0, Math.min(activePageIndex, pageOffsets.length - 1));
+    const maxScrollTop = Math.max(0, viewportEl.scrollHeight - viewHeight);
+    const lastIndex = pageOffsets.length - 1;
+    let activePageIndex;
+    if (
+      maxScrollTop > 0 &&
+      viewTop >= maxScrollTop - 2 &&
+      pageOffsets[lastIndex].top < viewTop + viewHeight * 0.6
+    ) {
+      activePageIndex = lastIndex;
+    } else {
+      const firstHeight = pageOffsets[firstVisible]?.height ?? viewHeight;
+      const anchorOffset = Math.min(viewHeight * 0.35, firstHeight * 0.5);
+      const anchorY = viewTop + anchorOffset;
+      activePageIndex = findFirstPageAtOrAfter(pageOffsets, anchorY);
+    }
+    activePageIndex = Math.max(0, Math.min(activePageIndex, lastIndex));
 
     return { firstVisible, lastVisible, activePageIndex };
   }
@@ -542,6 +555,46 @@ export function createViewport({ viewportEl, trackEl, onViewStateChange }) {
     scheduleVisibleRenders();
   }
 
+  function scrollPageStep(direction) {
+    if (!activeTab || pageOffsets.length === 0) {
+      return;
+    }
+    if (activeTab.zoomMode === "fit_page") {
+      scrollToPage(activeTab.pageIndex + direction);
+      return;
+    }
+    const step = Math.max(80, Math.round((viewportEl.clientHeight || 600) * 0.9));
+    const maxScrollTop = Math.max(0, viewportEl.scrollHeight - viewportEl.clientHeight);
+    viewportEl.scrollTop = Math.max(
+      0,
+      Math.min(viewportEl.scrollTop + direction * step, maxScrollTop),
+    );
+    notifyViewState(false);
+    scheduleVisibleRenders();
+  }
+
+  function scrollToStart() {
+    if (!activeTab || pageOffsets.length === 0) {
+      return;
+    }
+    viewportEl.scrollTop = 0;
+    notifyViewState(false);
+    scheduleVisibleRenders();
+  }
+
+  function scrollToEnd() {
+    if (!activeTab || pageOffsets.length === 0) {
+      return;
+    }
+    viewportEl.scrollTop = Math.max(0, viewportEl.scrollHeight - viewportEl.clientHeight);
+    notifyViewState(false);
+    scheduleVisibleRenders();
+  }
+
+  function focus() {
+    viewportEl.focus({ preventScroll: true });
+  }
+
   function setZoomMode(mode) {
     if (!activeTab) {
       return;
@@ -633,6 +686,10 @@ export function createViewport({ viewportEl, trackEl, onViewStateChange }) {
     mountTab,
     unmount,
     scrollToPage,
+    scrollPageStep,
+    scrollToStart,
+    scrollToEnd,
+    focus,
     setZoomMode,
     setCustomZoom,
     captureActiveSnapshot,

@@ -37,10 +37,11 @@
               id="toc-toggle-btn"
               class="icon-btn"
               type="button"
-              title="Outline"
+              title="Outline (Ctrl+B)"
               aria-label="Toggle outline"
+              aria-controls="toc-drawer"
+              aria-expanded="false"
               aria-pressed="false"
-              disabled
             >
               <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <path d="M2.5 3.5h11M2.5 8h7.5M2.5 12.5h9.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
@@ -58,6 +59,7 @@
                 inputmode="numeric"
                 autocomplete="off"
                 spellcheck="false"
+                title="Go to page (Ctrl+G)"
                 aria-label="Current page"
               />
               <span class="page-divider" aria-hidden="true">/</span>
@@ -71,7 +73,7 @@
                 id="zoom-out-btn"
                 class="icon-btn"
                 type="button"
-                title="Zoom out"
+                title="Zoom out (Ctrl+-)"
                 aria-label="Zoom out"
               >
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -83,7 +85,7 @@
                 id="zoom-in-btn"
                 class="icon-btn"
                 type="button"
-                title="Zoom in"
+                title="Zoom in (Ctrl++)"
                 aria-label="Zoom in"
               >
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -99,7 +101,7 @@
                 id="fit-width-btn"
                 class="toolbar-btn"
                 type="button"
-                title="Fit width"
+                title="Fit width (Ctrl+0)"
                 aria-label="Fit width"
                 aria-pressed="false"
               >
@@ -130,7 +132,7 @@
               id="search-toggle-btn"
               class="icon-btn"
               type="button"
-              title="Find in document"
+              title="Find in document (Ctrl+F)"
               aria-label="Find in document"
               aria-pressed="false"
               disabled
