@@ -185,6 +185,8 @@ Apply `.agents/skills/frontend-design/SKILL.md` (two-pass design plan + self-cri
 > **Amended by [CR-001](changes/001-tab-add-home-screen.md#4-ui-shell-and-visual-behavior)**: In **Chrome geometry** above, `+` (`tab-add-btn`) now opens or focuses the singleton `Home` tab; while `Home` is active, the tab strip remains visible and the document toolbar hides.
 >
 > **Amended by [CR-002](changes/002-integrated-titlebar-window-controls.md#3-window-chrome--layout)**: Native OS window decorations are disabled (`decorations: false`); `#tab-strip` serves as the integrated borderless titlebar (with draggable region and window caption controls) in both `>= 1`-tab and `0`-tab states.
+>
+> **Amended by [CR-003](changes/003-tab-strip-reorder.md#3-reordering-behavior--visual-feedback)**: Tabs in `#tab-list` support horizontal pointer drag-and-drop reordering with live sibling displacement and overflow edge auto-scroll.
 
 ### Core Layout Wireframe
 
@@ -256,6 +258,8 @@ src/
 
 > [!NOTE]
 > **Amended by [CR-001](changes/001-tab-add-home-screen.md#5-keyboard-shortcuts-and-focus-rules)**: `Ctrl+W`, `Ctrl+Tab`/`Ctrl+Shift+Tab`, and `Ctrl+1..9` include the singleton `Home` tab when open; document-only shortcuts remain inactive while `Home` is active.
+>
+> **Amended by [CR-003](changes/003-tab-strip-reorder.md#4-keyboard-reordering--shortcut-order)**: Focused tabs support `Ctrl+Shift+ArrowLeft` / `Ctrl+Shift+ArrowRight` to reorder tabs; `Ctrl+Tab` and `Ctrl+1..9` follow the reordered tab order.
 
 ---
 

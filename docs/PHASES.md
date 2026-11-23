@@ -97,6 +97,8 @@ Execute phases sequentially. Complete every item in a phase's **Exit Gate** befo
 > **Amended by [CR-001](changes/001-tab-add-home-screen.md#7-verification-checklist)**: In Phase 3 Task 4 and Exit Gate above, the `+` tab button (`tab-add-btn`) now opens a singleton `Home` tab showing the Home screen instead of invoking the file dialog directly; see CR-001 for the updated verification checklist.
 >
 > **Amended by [CR-002](changes/002-integrated-titlebar-window-controls.md#5-verification-checklist)**: The app uses a borderless window (`decorations: false`) with `#tab-strip` hosting the drag region and window caption controls across all states; see CR-002 for window chrome verification checks.
+>
+> **Amended by [CR-003](changes/003-tab-strip-reorder.md#5-verification-checklist)**: Tabs support horizontal pointer drag-and-drop and keyboard (`Ctrl+Shift+ArrowLeft`/`Right`) reordering; see CR-003 for verification checks.
 
 ---
 
