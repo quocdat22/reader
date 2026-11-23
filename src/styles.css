@@ -120,16 +120,80 @@ input:focus-visible,
   position: relative;
 }
 
-/* Slim Tab Strip (32px) */
+/* Slim Tab Strip / Integrated Title Bar (32px) */
 
 .tab-strip {
   display: flex;
   align-items: flex-end;
   height: var(--tab-strip-height);
-  padding: 0 6px;
+  padding: 0 0 0 6px;
   gap: 2px;
   background-color: var(--surface-chrome);
   border-bottom: 1px solid var(--border-subtle);
+}
+
+.tab-strip--empty {
+  padding-left: 0;
+  border-bottom-color: transparent;
+}
+
+.tab-strip-drag {
+  flex: 1 0 36px;
+  align-self: stretch;
+  min-width: 36px;
+}
+
+.window-controls {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: stretch;
+  align-self: stretch;
+}
+
+.win-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 100%;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink-muted);
+  cursor: pointer;
+  transition: background-color 110ms ease, color 110ms ease;
+}
+
+.win-btn:hover {
+  background-color: var(--hover-subtle);
+  color: var(--ink-primary);
+}
+
+.win-btn:active {
+  background-color: var(--active-subtle);
+}
+
+.win-btn--close:hover {
+  background-color: #C42B1C;
+  color: var(--surface-paper);
+}
+
+.win-btn--close:active {
+  background-color: #B22719;
+  color: var(--surface-paper);
+}
+
+.win-icon-restore {
+  display: none;
+}
+
+.win-btn--max[data-maximized="true"] .win-icon-max {
+  display: none;
+}
+
+.win-btn--max[data-maximized="true"] .win-icon-restore {
+  display: block;
 }
 
 .tab-list {
@@ -498,7 +562,7 @@ input:focus-visible,
   overflow-y: auto;
   display: flex;
   justify-content: center;
-  padding: 16vh 28px 40px;
+  padding: 13vh 28px 40px;
   background-color: var(--surface-chrome);
 }
 
@@ -1178,7 +1242,7 @@ input:focus-visible,
 
 @media (max-height: 540px) {
   .empty-state {
-    padding-top: 10vh;
+    padding-top: 8vh;
   }
 }
 

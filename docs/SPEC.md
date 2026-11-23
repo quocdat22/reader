@@ -183,6 +183,8 @@ Apply `.agents/skills/frontend-design/SKILL.md` (two-pass design plan + self-cri
 
 > [!NOTE]
 > **Amended by [CR-001](changes/001-tab-add-home-screen.md#4-ui-shell-and-visual-behavior)**: In **Chrome geometry** above, `+` (`tab-add-btn`) now opens or focuses the singleton `Home` tab; while `Home` is active, the tab strip remains visible and the document toolbar hides.
+>
+> **Amended by [CR-002](changes/002-integrated-titlebar-window-controls.md#3-window-chrome--layout)**: Native OS window decorations are disabled (`decorations: false`); `#tab-strip` serves as the integrated borderless titlebar (with draggable region and window caption controls) in both `>= 1`-tab and `0`-tab states.
 
 ### Core Layout Wireframe
 
@@ -208,6 +210,8 @@ Apply `.agents/skills/frontend-design/SKILL.md` (two-pass design plan + self-cri
 
 > [!NOTE]
 > **Amended by [CR-001](changes/001-tab-add-home-screen.md#4-ui-shell-and-visual-behavior)**: The Home screen (`#empty-state`) is also displayed inside the singleton `Home` tab beneath the visible tab strip while other document tabs remain open.
+>
+> **Amended by [CR-002](changes/002-integrated-titlebar-window-controls.md#3-window-chrome--layout)**: In the `0`-tab Home state, `#app-chrome` stays visible so the borderless `#tab-strip` provides a seamless top drag region and right-aligned window controls above `#empty-state`.
 
 ### Frontend Module Structure (`src/`)
 ```text

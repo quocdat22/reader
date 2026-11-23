@@ -223,3 +223,28 @@ export async function subscribeDragDrop({ onEnter, onDrop, onLeave }) {
     }
   });
 }
+
+/**
+ * Returns a thin controller for the current Tauri window caption controls.
+ * Falls back to no-ops if window APIs are unavailable outside Tauri.
+ */
+export function getWindowControls() {
+  const win = window.__TAURI__?.window?.getCurrentWindow?.();
+  if (!win) {
+    return {
+      minimize: async () => {},
+      toggleMaximize: async () => {},
+      close: async () => {},
+      isMaximized: async () => false,
+      onResized: async () => () => {},
+    };
+  }
+
+  return {
+    minimize: () => win.minimize(),
+    toggleMaximize: () => win.toggleMaximize(),
+    close: () => win.close(),
+    isMaximized: () => win.isMaximized(),
+    onResized: (handler) => win.onResized(handler),
+  };
+}

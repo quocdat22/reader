@@ -10,13 +10,14 @@
 
   <body>
     <div id="app" class="app">
-      <header id="app-chrome" class="chrome" hidden>
-        <div id="tab-strip" class="tab-strip">
+      <header id="app-chrome" class="chrome">
+        <div id="tab-strip" class="tab-strip tab-strip--empty">
           <div
             id="tab-list"
             class="tab-list"
             role="tablist"
             aria-label="Open documents"
+            hidden
           ></div>
           <button
             id="tab-add-btn"
@@ -24,11 +25,52 @@
             type="button"
             title="New Home tab"
             aria-label="Open Home tab"
+            hidden
           >
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <path d="M8 3.25v9.5M3.25 8h9.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
             </svg>
           </button>
+          <div class="tab-strip-drag" data-tauri-drag-region></div>
+          <div id="window-controls" class="window-controls" role="group" aria-label="Window controls">
+            <button
+              id="win-min-btn"
+              class="win-btn win-btn--min"
+              type="button"
+              title="Minimize"
+              aria-label="Minimize window"
+            >
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
+                <path d="M1 5h8" stroke="currentColor" stroke-width="1.1" />
+              </svg>
+            </button>
+            <button
+              id="win-max-btn"
+              class="win-btn win-btn--max"
+              type="button"
+              title="Maximize"
+              aria-label="Maximize window"
+            >
+              <svg class="win-icon-max" width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
+                <rect x="1.5" y="1.5" width="7" height="7" stroke="currentColor" stroke-width="1.1" />
+              </svg>
+              <svg class="win-icon-restore" width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
+                <path d="M3 3V1.5h5.5V7H7" stroke="currentColor" stroke-width="1.1" />
+                <rect x="1.5" y="3" width="5.5" height="5.5" stroke="currentColor" stroke-width="1.1" />
+              </svg>
+            </button>
+            <button
+              id="win-close-btn"
+              class="win-btn win-btn--close"
+              type="button"
+              title="Close"
+              aria-label="Close window"
+            >
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
+                <path d="M1.5 1.5l7 7M8.5 1.5l-7 7" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" />
+              </svg>
+            </button>
+          </div>
         </div>
 
         <div id="toolbar" class="toolbar" role="toolbar" aria-label="Document controls">

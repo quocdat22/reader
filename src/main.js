@@ -6,6 +6,7 @@ import {
   closeDocument,
   getInitialFile,
   getPersistedState,
+  getWindowControls,
   openDocument,
   pickPdfFiles,
   removeRecentFile,
@@ -28,7 +29,12 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 async function bootstrap() {
-  const appChromeEl = document.getElementById("app-chrome");
+  const tabStripEl = document.getElementById("tab-strip");
+  const tabListEl = document.getElementById("tab-list");
+  const tabAddBtnEl = document.getElementById("tab-add-btn");
+  const winMinBtnEl = document.getElementById("win-min-btn");
+  const winMaxBtnEl = document.getElementById("win-max-btn");
+  const winCloseBtnEl = document.getElementById("win-close-btn");
   const toolbarEl = document.getElementById("toolbar");
   const emptyStateEl = document.getElementById("empty-state");
   const emptyOpenBtnEl = document.getElementById("empty-open-btn");
@@ -144,7 +150,9 @@ async function bootstrap() {
     const activeDoc = tabManager.getActiveDocument();
     const isHomeTab = tabManager.isHomeActive();
 
-    appChromeEl.hidden = !hasAnyTabs;
+    tabStripEl.classList.toggle("tab-strip--empty", !hasAnyTabs);
+    tabListEl.hidden = !hasAnyTabs;
+    tabAddBtnEl.hidden = !hasAnyTabs;
     toolbarEl.hidden = !activeDoc;
     readerShellEl.hidden = !activeDoc;
     emptyStateEl.hidden = Boolean(activeDoc);
@@ -290,8 +298,8 @@ async function bootstrap() {
   });
 
   const tabManager = createTabManager({
-    tabListEl: document.getElementById("tab-list"),
-    addBtnEl: document.getElementById("tab-add-btn"),
+    tabListEl,
+    addBtnEl: tabAddBtnEl,
     onSelectTab: (tabId) => {
       switchToTab(tabId);
     },
@@ -679,18 +687,23 @@ async function bootstrap() {
     },
   });
 
-  window.addEventListener("beforeunload", () => {
+  async function flushActiveReadingState() {
     const active = tabManager.getActiveDocument();
-    if (active) {
-      viewport.captureActiveSnapshot();
-      pendingSavePayload = {
-        path: active.canonicalPath,
-        pageIndex: active.pageIndex,
-        zoomMode: active.zoomMode,
-        zoomScale: active.zoomScale,
-      };
-      void flushPendingSave();
+    if (!active) {
+      return flushPendingSave();
     }
+    viewport.captureActiveSnapshot();
+    pendingSavePayload = {
+      path: active.canonicalPath,
+      pageIndex: active.pageIndex,
+      zoomMode: active.zoomMode,
+      zoomScale: active.zoomScale,
+    };
+    return flushPendingSave();
+  }
+
+  window.addEventListener("beforeunload", () => {
+    void flushActiveReadingState();
   });
 
   // Prevent unintended WebView navigation if non-file links or text are dropped onto the window.
@@ -713,6 +726,40 @@ async function bootstrap() {
     });
   } catch (err) {
     console.error("Failed to subscribe to drag-drop events:", err);
+  }
+
+  const windowControls = getWindowControls();
+
+  async function syncMaximizeState() {
+    try {
+      const maximized = await windowControls.isMaximized();
+      winMaxBtnEl.dataset.maximized = String(maximized);
+      const label = maximized ? "Restore" : "Maximize";
+      winMaxBtnEl.title = label;
+      winMaxBtnEl.setAttribute("aria-label", `${label} window`);
+    } catch (err) {
+      console.error("Failed to query window maximize state:", err);
+    }
+  }
+
+  winMinBtnEl.addEventListener("click", () => {
+    void windowControls.minimize();
+  });
+  winMaxBtnEl.addEventListener("click", () => {
+    void windowControls.toggleMaximize().then(() => syncMaximizeState());
+  });
+  winCloseBtnEl.addEventListener("click", async () => {
+    await flushActiveReadingState();
+    void windowControls.close();
+  });
+
+  await syncMaximizeState();
+  try {
+    await windowControls.onResized(() => {
+      void syncMaximizeState();
+    });
+  } catch (err) {
+    console.error("Failed to subscribe to window resize events:", err);
   }
 
   // Initial startup load: persisted recents + optional CLI / "Open With" file.

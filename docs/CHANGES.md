@@ -9,6 +9,7 @@
 | ID | Title | Status | Affected Baseline Sections | Specification |
 | --- | --- | --- | --- | --- |
 | `CR-001` | Open singleton Home tab from `tab-add-btn` (`+`) | Implemented | [SPEC §1](SPEC.md#v1-goals), [SPEC §5 Chrome](SPEC.md#aesthetic-direction), [SPEC §5 Layout](SPEC.md#core-layout-wireframe), [SPEC §5 Shortcuts](SPEC.md#keyboard-shortcuts), [PHASES Phase 3](PHASES.md#phase-3-minimalist-ui-shell-multi-tab-strip--virtualized-viewport) | [001-tab-add-home-screen.md](changes/001-tab-add-home-screen.md) |
+| `CR-002` | Integrated borderless titlebar & window controls | Implemented | [SPEC §5 Chrome](SPEC.md#aesthetic-direction), [SPEC §5 Layout](SPEC.md#core-layout-wireframe), [PHASES Phase 3](PHASES.md#phase-3-minimalist-ui-shell-multi-tab-strip--virtualized-viewport) | [002-integrated-titlebar-window-controls.md](changes/002-integrated-titlebar-window-controls.md) |
 
 ---
 
