@@ -166,6 +166,9 @@ Stored at `<app_data_dir>/state.json` using atomic write (write to `state.json.t
 - Cap `recent_files` at `10` entries (most recently opened first, deduplicated by canonical path).
 - If `state.json` is missing or malformed, log a warning and start with an empty default state without crashing.
 
+> [!NOTE]
+> **Amended by [CR-004](changes/004-paginated-unbounded-recents.md#3-persistence-behavior)**: `recent_files` now retains all opened documents (deduplicated by canonical path, most recently opened first) without the 10-entry cap.
+
 ---
 
 ## 5. Frontend Design & UX Brief
@@ -214,6 +217,8 @@ Apply `.agents/skills/frontend-design/SKILL.md` (two-pass design plan + self-cri
 > **Amended by [CR-001](changes/001-tab-add-home-screen.md#4-ui-shell-and-visual-behavior)**: The Home screen (`#empty-state`) is also displayed inside the singleton `Home` tab beneath the visible tab strip while other document tabs remain open.
 >
 > **Amended by [CR-002](changes/002-integrated-titlebar-window-controls.md#3-window-chrome--layout)**: In the `0`-tab Home state, `#app-chrome` stays visible so the borderless `#tab-strip` provides a seamless top drag region and right-aligned window controls above `#empty-state`.
+>
+> **Amended by [CR-004](changes/004-paginated-unbounded-recents.md#4-paginated-recent-section-ui)**: `#recent-section` paginates the unbounded `recent_files` history at 10 items per page with compact header pagination controls when more than 10 entries exist.
 
 ### Frontend Module Structure (`src/`)
 ```text

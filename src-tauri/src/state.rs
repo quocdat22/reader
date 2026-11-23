@@ -16,9 +16,6 @@ use crate::worker::{DocumentWorker, canonicalize_document_path};
 /// Current schema version for `<app_data_dir>/state.json`.
 pub const STATE_SCHEMA_VERSION: u32 = 1;
 
-/// Maximum number of entries retained in [`PersistedState::recent_files`].
-pub const MAX_RECENT_FILES: usize = 10;
-
 /// Maximum number of per-document entries retained in [`PersistedState::positions`].
 pub const MAX_SAVED_POSITIONS: usize = 200;
 
@@ -66,7 +63,7 @@ pub struct RecentFile {
 pub struct PersistedState {
     /// Persistence schema version (currently [`STATE_SCHEMA_VERSION`]).
     pub version: u32,
-    /// Most recently opened files (most recent first, deduplicated, capped at [`MAX_RECENT_FILES`]).
+    /// All opened files ordered most recently opened first and deduplicated by canonical path.
     #[serde(default)]
     pub recent_files: Vec<RecentFile>,
     /// Per-file reading positions keyed by canonical path string.
@@ -162,8 +159,8 @@ impl PersistedState {
         Ok(())
     }
 
-    /// Records a document open event at the front of `recent_files` (deduplicated and capped
-    /// at [`MAX_RECENT_FILES`]) and returns any saved [`ReadingPosition`] clamped to `page_count`.
+    /// Records a document open event at the front of `recent_files` (deduplicated without a count
+    /// cap) and returns any saved [`ReadingPosition`] clamped to `page_count`.
     pub fn record_open(
         &mut self,
         canonical_path: &str,
@@ -194,7 +191,6 @@ impl PersistedState {
                 page_count,
             },
         );
-        self.recent_files.truncate(MAX_RECENT_FILES);
 
         saved_position
     }
@@ -278,9 +274,6 @@ impl PersistedState {
             {
                 deduped.push(entry);
             }
-            if deduped.len() == MAX_RECENT_FILES {
-                break;
-            }
         }
         self.recent_files = deduped;
     }
@@ -310,8 +303,8 @@ impl PersistedState {
             self.positions.remove(&key);
         }
 
-        // If still over cap (unlikely since MAX_RECENT_FILES <= MAX_SAVED_POSITIONS), drop
-        // deterministic lexicographic keys excluding `keep_key`.
+        // If still over cap (for example when more than MAX_SAVED_POSITIONS recent files exist),
+        // drop deterministic lexicographic keys excluding `keep_key`.
         if self.positions.len() > MAX_SAVED_POSITIONS {
             let mut remaining: Vec<String> = self
                 .positions
@@ -642,21 +635,40 @@ mod tests {
     }
 
     #[test]
-    fn record_open_caps_recent_files_at_ten_entries() {
+    fn record_open_retains_all_opened_files_beyond_ten_entries() {
         let mut state = PersistedState::default();
 
-        for i in 0..15_usize {
+        for i in 0..25_usize {
             let path = format!("/docs/file_{i}.pdf");
             let title = format!("File {i}");
             state.record_open(&path, &title, 50, i as u64);
         }
 
-        assert_eq!(state.recent_files.len(), MAX_RECENT_FILES);
-        assert_eq!(state.recent_files[0].path, "/docs/file_14.pdf");
-        assert_eq!(
-            state.recent_files[MAX_RECENT_FILES - 1].path,
-            "/docs/file_5.pdf"
-        );
+        assert_eq!(state.recent_files.len(), 25);
+        assert_eq!(state.recent_files[0].path, "/docs/file_24.pdf");
+        assert_eq!(state.recent_files[24].path, "/docs/file_0.pdf");
+    }
+
+    #[test]
+    fn load_or_default_retains_more_than_ten_deduplicated_recents() {
+        let dir = TempDirGuard::new("many-recents");
+        let state_path = dir.state_file();
+
+        let mut original = PersistedState::default();
+        for i in 0..16_usize {
+            let path = format!("/docs/book_{i}.pdf");
+            let title = format!("Book {i}");
+            original.record_open(&path, &title, 20, i as u64);
+        }
+        original.recent_files.push(original.recent_files[0].clone());
+        original
+            .save_atomic(&state_path)
+            .expect("atomic save should succeed");
+
+        let loaded = PersistedState::load_or_default(&state_path);
+        assert_eq!(loaded.recent_files.len(), 16);
+        assert_eq!(loaded.recent_files[0].path, "/docs/book_15.pdf");
+        assert_eq!(loaded.recent_files[15].path, "/docs/book_0.pdf");
     }
 
     #[test]

@@ -64,6 +64,9 @@ Execute phases sequentially. Complete every item in a phase's **Exit Gate** befo
   - `cargo test`, `cargo clippy --all-targets --all-features --locked -- -D warnings`, and `cargo fmt --check` pass.
   - `cargo tauri dev` launches cleanly with zero backend startup errors.
 
+> [!NOTE]
+> **Amended by [CR-004](changes/004-paginated-unbounded-recents.md#3-persistence-behavior)**: `PersistedState` no longer caps `recent_files` at 10 entries; unit tests verify unbounded retention beyond 10 entries.
+
 ---
 
 ## Phase 3: Minimalist UI Shell, Multi-Tab Strip & Virtualized Viewport
@@ -99,6 +102,8 @@ Execute phases sequentially. Complete every item in a phase's **Exit Gate** befo
 > **Amended by [CR-002](changes/002-integrated-titlebar-window-controls.md#5-verification-checklist)**: The app uses a borderless window (`decorations: false`) with `#tab-strip` hosting the drag region and window caption controls across all states; see CR-002 for window chrome verification checks.
 >
 > **Amended by [CR-003](changes/003-tab-strip-reorder.md#5-verification-checklist)**: Tabs support horizontal pointer drag-and-drop and keyboard (`Ctrl+Shift+ArrowLeft`/`Right`) reordering; see CR-003 for verification checks.
+>
+> **Amended by [CR-004](changes/004-paginated-unbounded-recents.md#5-verification-checklist)**: `src/empty-state.js` paginates `recent_files` at 10 items per page when more than 10 files exist; see CR-004 for verification checks.
 
 ---
 

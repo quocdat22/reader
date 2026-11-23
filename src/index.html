@@ -258,7 +258,54 @@
             </div>
 
             <section id="recent-section" class="recent-section" aria-labelledby="recent-heading" hidden>
-              <h2 id="recent-heading" class="recent-heading">Recent</h2>
+              <div class="recent-header">
+                <div class="recent-heading-group">
+                  <h2 id="recent-heading" class="recent-heading">Recent</h2>
+                  <span id="recent-range" class="recent-range" hidden></span>
+                </div>
+                <nav
+                  id="recent-pagination"
+                  class="recent-pagination"
+                  aria-label="Recent files pages"
+                  hidden
+                >
+                  <button
+                    id="recent-prev-btn"
+                    class="recent-page-btn recent-page-nav"
+                    type="button"
+                    title="Previous page"
+                    aria-label="Previous page"
+                  >
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                      <path
+                        d="M7.5 2.5L4 6l3.5 3.5"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      />
+                    </svg>
+                  </button>
+                  <div id="recent-page-list" class="recent-page-list"></div>
+                  <button
+                    id="recent-next-btn"
+                    class="recent-page-btn recent-page-nav"
+                    type="button"
+                    title="Next page"
+                    aria-label="Next page"
+                  >
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                      <path
+                        d="M4.5 2.5L8 6l-3.5 3.5"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      />
+                    </svg>
+                  </button>
+                </nav>
+              </div>
               <ul id="recent-list" class="recent-list"></ul>
             </section>
           </div>

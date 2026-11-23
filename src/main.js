@@ -318,6 +318,11 @@ async function bootstrap() {
     errorActionBtnEl: document.getElementById("empty-error-action"),
     errorDismissBtnEl: document.getElementById("empty-error-dismiss"),
     recentSectionEl: document.getElementById("recent-section"),
+    recentRangeEl: document.getElementById("recent-range"),
+    recentPaginationEl: document.getElementById("recent-pagination"),
+    recentPrevBtnEl: document.getElementById("recent-prev-btn"),
+    recentNextBtnEl: document.getElementById("recent-next-btn"),
+    recentPageListEl: document.getElementById("recent-page-list"),
     recentListEl: document.getElementById("recent-list"),
     onOpenDialog: () => {
       void handleOpenViaDialog();
@@ -439,6 +444,7 @@ async function bootstrap() {
       }
 
       viewport.focus();
+      emptyState.resetRecentPage();
       void refreshRecents();
       return { ok: true, error: null };
     } catch (err) {
