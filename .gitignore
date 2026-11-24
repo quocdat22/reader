@@ -25,6 +25,13 @@ dist-ssr
 
 tests/fixtures
 
+# Downloaded PDFium runtime binaries (fetched via scripts/fetch-pdfium.ps1)
+src-tauri/resources/*.dll
+src-tauri/resources/*.dylib
+src-tauri/resources/*.so
+src-tauri/resources/PDFIUM-LICENSE.txt
+src-tauri/resources/PDFIUM-VERSION.txt
+
 # Secrets and local environment files
 .env
 .env.*

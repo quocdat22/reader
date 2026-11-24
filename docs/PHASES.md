@@ -23,6 +23,9 @@ Execute phases sequentially. Complete every item in a phase's **Exit Gate** befo
   - `cargo check`, `cargo fmt --check`, and `cargo clippy --all-targets --all-features --locked -- -D warnings` pass.
   - `git status --short` shows `tests/fixtures/` remains untracked/ignored.
 
+> [!NOTE]
+> **Amended by [CR-005](changes/005-pdfium-render-engine.md#3-engine-binary-fetch--bundling)**: Phase 0 now configures `pdfium-render` (`0.9.6`) with `scripts/fetch-pdfium.ps1` and Tauri `bundle.resources` for `pdfium.dll` instead of statically compiled `mupdf`.
+
 ---
 
 ## Phase 1: Rust Core — `DocumentBackend`, `PdfBackend` & Worker Thread
@@ -41,6 +44,9 @@ Execute phases sequentially. Complete every item in a phase's **Exit Gate** befo
 - **Exit Gate**:
   - `cargo test` passes (all unit tests + fixture integration tests running against the local PDF in `tests/fixtures/`).
   - `cargo clippy --all-targets --all-features --locked -- -D warnings` and `cargo fmt --check` pass.
+
+> [!NOTE]
+> **Amended by [CR-005](changes/005-pdfium-render-engine.md#5-coordinate-projection-rendering-outline-text--search)**: `PdfBackend` in `src-tauri/src/backend/pdf.rs` is now implemented on `pdfium-render` with bottom-left + `CropBox` + `/Rotate` projection tests and Unicode stream-reader loading.
 
 ---
 
@@ -164,3 +170,6 @@ Execute phases sequentially. Complete every item in a phase's **Exit Gate** befo
   - `cargo test` passes.
   - `cargo tauri build` succeeds on Windows x64 and opens a local `tests/fixtures/*.pdf` cleanly.
   - `git status --short` confirms zero tracked files in `tests/fixtures/`, and repo-wide search confirms no specific fixture filename appears anywhere in tracked files.
+
+> [!NOTE]
+> **Amended by [CR-005](changes/005-pdfium-render-engine.md#6-verification-checklist)**: Phase 6 release verification confirms `cargo tauri build` bundles `pdfium.dll` and `PDFIUM-LICENSE.txt` and launches cleanly outside the dev tree.

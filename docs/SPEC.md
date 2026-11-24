@@ -57,6 +57,9 @@ Concise architectural, interface, and visual specification for `reader` (`com.ro
 - **Build prerequisites (Windows x64)**: Visual Studio C++ Build Tools (`MSBuild`) and LLVM (`libclang` for `bindgen`, auto-discovered on `PATH` or via `LIBCLANG_PATH`).
 - **Bundling**: Single self-contained executable — zero external PDF DLLs to fetch, discover, or bundle at runtime.
 
+> [!NOTE]
+> **Amended by [CR-005](changes/005-pdfium-render-engine.md#3-engine-binary-fetch--bundling)**: The PDF engine now uses `pdfium-render` (`0.9.6`, `pdfium_8125`, `thread_safe`) dynamically bound to a pinned no-V8 `pdfium.dll` (`chromium/8125`, `Apache-2.0 / BSD-3-Clause`) fetched via `scripts/fetch-pdfium.ps1` and bundled via Tauri `bundle.resources` (removing `mupdf-sys`, `MSBuild`, and `libclang` build requirements).
+
 ---
 
 ## 3. Rust Backend Design
@@ -105,6 +108,9 @@ pub trait DocumentBackend {
   - When the user switches tabs, closes a tab, or rapidly scrolls/zooms, bump the epoch and discard queued stale render requests for older epochs or closed documents.
   - Return a typed `ReaderError::Cancelled` so the frontend ignores superseded renders cleanly.
 
+> [!NOTE]
+> **Amended by [CR-005](changes/005-pdfium-render-engine.md#4-process-singleton-thread-safety--streaming)**: `Pdfium` is initialized once in a process-wide `OnceLock` (`thread_safe`) providing `&'static Pdfium` to `PdfDocument<'static>`, while `doc-worker` remains the single runtime execution thread for all open tabs.
+
 ### Normalized Coordinate System
 - MuPDF uses top-left origin in page points (`page.bounds()`).
 - `PdfBackend` renders pages onto opaque-white `RGBA8` pixmaps at maximum 8-bit anti-aliasing (`aa_level = 8`) with exact target pixel transforms, and converts **all** text runs (line/contiguous-run level, splitting on wide column/table gutters) and search highlight quads into **top-left normalized `[0.0, 1.0]` coordinates**:
@@ -118,6 +124,9 @@ pub trait DocumentBackend {
   }
   ```
 - Frontend maps `NormalizedRect` to CSS pixels by multiplying by rendered page CSS `width` and `height`. Zooming never requires re-fetching text or search geometry from Rust.
+
+> [!NOTE]
+> **Amended by [CR-005](changes/005-pdfium-render-engine.md#5-coordinate-projection-rendering-outline-text--search)**: `PdfBackend` now projects PDFium's bottom-left user-space rectangles through visible `CropBox ∩ MediaBox` and clockwise `/Rotate` into top-left `[0.0, 1.0]` `NormalizedRect` values.
 
 ### Error Handling (`error.rs`)
 - Define `ReaderError` with `thiserror`: `Io`, `UnsupportedFormat`, `PasswordProtected`, `InvalidDocument`, `PageOutOfRange`, `DocumentNotFound`, `Cancelled`, `Internal`.

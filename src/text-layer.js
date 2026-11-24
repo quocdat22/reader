@@ -1,5 +1,5 @@
 /**
- * Lazy transparent HTML text selection layer mapped from normalized MuPDF geometry.
+ * Lazy transparent HTML text selection layer mapped from normalized document geometry.
  *
  * Fetches `get_page_text` lazily for visible/overscan pages of the active tab,
  * caches per open tab with a bounded LRU cap, rescales purely via CSS transforms

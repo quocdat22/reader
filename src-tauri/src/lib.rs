@@ -14,6 +14,9 @@ pub fn run() {
     let result = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
+            if let Ok(resource_dir) = app.path().resource_dir() {
+                backend::pdf::configure_resource_dir(resource_dir);
+            }
             let state_path = app
                 .path()
                 .app_data_dir()

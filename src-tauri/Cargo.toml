@@ -22,7 +22,7 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-mupdf = { version = "0.8", default-features = false, features = ["base14-fonts", "system-fonts", "bundled-fonts-noto"] }
+pdfium-render = { version = "0.9.6", default-features = false, features = ["pdfium_8125", "thread_safe"] }
 thiserror = "2"
 tokio = { version = "1", features = ["sync"] }
 
@@ -46,11 +46,6 @@ unwrap_used = "deny"
 expect_used = "deny"
 panic = "deny"
 
-
-# Compile MuPDF with optimizations in dev/test builds: matches Rust's release MSVC CRT
-# (avoiding Debug CRT conflicts on Windows) and keeps `cargo tauri dev` page rendering fast.
-[profile.dev.package.mupdf-sys]
-opt-level = 2
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]

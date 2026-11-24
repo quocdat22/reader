@@ -25,7 +25,7 @@ Operating contract for coding agents working on `reader` — a minimalist deskto
 
 - **No Node/bundler**: Frontend lives in `src/` as plain HTML, CSS, and ES modules (`frontendDist: "../src"`, `withGlobalTauri: true`). Do not add `package.json`, TypeScript build steps, or JS frameworks.
 - **Minimalism & scope discipline**: Implement only what is in `docs/SPEC.md` v1 scope. Do not add annotations, themes/dark-mode PDF inversion, PDF links, split views, or extra chrome.
-- **MuPDF thread safety & licensing**: The PDF engine uses statically linked `mupdf` (`AGPL-3.0`). All MuPDF calls execute on the single dedicated Rust worker thread (`doc-worker`) owning the thread-local MuPDF context and open document handles. Never block the Tauri async runtime. On Windows x64, building `mupdf-sys` requires Visual Studio C++ Build Tools (`MSBuild`) and LLVM (`libclang` for `bindgen`).
+- **PDFium thread safety, binary & licensing**: The PDF engine uses [`pdfium-render`](https://crates.io/crates/pdfium-render) (`0.9.6`, `pdfium_8125`, `thread_safe`) dynamically bound to a pinned no-V8 `pdfium.dll` (`chromium/8125`, `Apache-2.0 / BSD-3-Clause`). Run `.\scripts\fetch-pdfium.ps1` to download and SHA-256-verify `src-tauri/resources/pdfium.dll` (gitignored, bundled into release builds via Tauri `bundle.resources`). All runtime PDF calls execute on the single dedicated Rust worker thread (`doc-worker`) owning open document handles while sharing a process-wide `OnceLock<Pdfium>` singleton. Never block the Tauri async runtime.
 - **Test fixture privacy**:
   - Local PDF fixtures live in `tests/fixtures/` (ignored by `.gitignore`).
   - **Never** track, stage, or commit any file under `tests/fixtures/`.
@@ -33,6 +33,7 @@ Operating contract for coding agents working on `reader` — a minimalist deskto
 
 ## Repository Map
 
+- `scripts/` — Setup helpers (`fetch-pdfium.ps1` downloads & SHA-256-verifies pinned `pdfium.dll`).
 - `src/` — Vanilla HTML/CSS/JS frontend served directly by Tauri.
 - `src-tauri/` — Rust backend (`reader_lib`), Tauri v2 config (`tauri.conf.json`), capabilities (`capabilities/default.json`).
 - `tests/fixtures/` — Gitignored local PDF fixture directory for integration and manual testing.
@@ -43,6 +44,9 @@ Operating contract for coding agents working on `reader` — a minimalist deskto
 Run from repo root (or `src-tauri/` for `cargo` commands where noted):
 
 ```powershell
+# Fetch pinned PDFium runtime binary (first time or after clean clone)
+.\scripts\fetch-pdfium.ps1
+
 # Rust formatting, lints, and tests (run inside src-tauri/)
 cargo fmt --check
 cargo clippy --all-targets --all-features --locked -- -D warnings

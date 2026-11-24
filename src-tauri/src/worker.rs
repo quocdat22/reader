@@ -1,7 +1,7 @@
 //! Dedicated single-threaded document worker owning all open [`DocumentBackend`] instances.
 //!
 //! All document open, render, outline, text, and search operations execute on one
-//! OS thread (`doc-worker`) owning the `MuPDF` thread-local context and document handles,
+//! OS thread (`doc-worker`) owning all open document handles,
 //! bridged to async callers through `tokio::sync::mpsc` and `tokio::sync::oneshot`.
 
 use std::collections::{HashMap, HashSet};
@@ -135,7 +135,7 @@ impl DocumentWorker {
     /// path is already open (`already_open == true`).
     ///
     /// # Errors
-    /// Propagates filesystem, format, `MuPDF`, or worker channel errors as [`ReaderError`].
+    /// Propagates filesystem, format, `PDFium`, or worker channel errors as [`ReaderError`].
     pub async fn open_document(&self, path: PathBuf) -> Result<OpenedDocument, ReaderError> {
         let (reply_tx, reply_rx) = oneshot::channel();
         self.send_request(WorkerRequest::Open {
