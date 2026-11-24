@@ -212,24 +212,26 @@ impl DocumentBackend for PdfBackend {
     ) -> Result<RenderedPage, ReaderError> {
         let page = self.load_page(page_index)?;
         let (clamped_w, clamped_h) = clamp_render_dimensions(width_px, height_px);
+        let is_native_scale = clamped_w == width_px && clamped_h == height_px;
 
         let target_w = Pixels::try_from(clamped_w)
             .map_err(|err| ReaderError::Internal(format!("invalid render width: {err}")))?;
         let target_h = Pixels::try_from(clamped_h)
             .map_err(|err| ReaderError::Internal(format!("invalid render height: {err}")))?;
 
-        // `set_fixed_size` with default `render_form_data(true)` routes through
-        // `FPDF_RenderPageBitmap` with exact `(target_w, target_h)` pixels, honors intrinsic
-        // page `/Rotate` and `CropBox`, clears to opaque white, renders annotations/forms,
-        // uses grayscale anti-aliasing, and writes RGBA directly via `FPDF_REVERSE_BYTE_ORDER`.
+        // PDFium's AGG backend ignores `FPDF_LCD_TEXT` on alpha-enabled `BGRA` bitmaps, so we
+        // render onto opaque `BGRx` cleared to `PdfColor::WHITE` (matching our `{ alpha: false }`
+        // canvas) and enable LCD subpixel text AA whenever dimensions are 1:1 physical pixels.
+        // Clamped bitmaps fall back to grayscale AA so CSS upscaling does not magnify RGB fringes.
+        // `FPDF_REVERSE_BYTE_ORDER` still writes tightly packed `RGBA8` (`alpha == 255`) directly.
         let config = PdfRenderConfig::new()
             .set_fixed_size(target_w, target_h)
-            .set_format(PdfBitmapFormat::BGRA)
+            .set_format(PdfBitmapFormat::BGRx)
             .set_clear_color(PdfColor::WHITE)
             .clear_before_rendering(true)
             .render_annotations(true)
             .render_form_data(true)
-            .use_lcd_text_rendering(false);
+            .use_lcd_text_rendering(is_native_scale);
 
         let bitmap = page
             .render_with_config(&config)
@@ -1272,5 +1274,56 @@ mod tests {
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].page_index, 1);
         assert_ne!(matches[0].rects.len(), 0);
+    }
+
+    #[test]
+    fn render_page_enables_lcd_subpixel_aa_at_native_size_with_opaque_alpha() {
+        let dir = TempDirGuard::new("lcd-native");
+        let pdf_bytes =
+            build_synthetic_text_pdf("0 0 240 120", None, 0, "1 0 0 1 20 60", "Sharpness Test");
+        let pdf_path = dir.write_file("lcd-native.pdf", &pdf_bytes);
+
+        let mut backend = PdfBackend::open(&pdf_path).expect("synthetic PDF should open");
+        let rendered = backend
+            .render_page(0, 320, 160)
+            .expect("native render succeeds");
+
+        let pixels = rendered.rgba.as_chunks::<4>().0;
+        assert!(
+            pixels.iter().all(|px| px[3] == 255),
+            "expected every rendered BGRx pixel to carry opaque alpha 255"
+        );
+        assert!(
+            pixels.iter().any(|px| px[0] != px[1] || px[1] != px[2]),
+            "expected LCD subpixel AA to produce chromatic edge pixels on native-scale black text"
+        );
+    }
+
+    #[test]
+    fn render_page_falls_back_to_grayscale_aa_when_dimensions_are_clamped() {
+        let dir = TempDirGuard::new("lcd-clamped");
+        let pdf_bytes =
+            build_synthetic_text_pdf("0 0 240 40", None, 0, "1 0 0 1 10 12", "Clamped Text");
+        let pdf_path = dir.write_file("lcd-clamped.pdf", &pdf_bytes);
+
+        let mut backend = PdfBackend::open(&pdf_path).expect("synthetic PDF should open");
+        // Exceed MAX_RENDER_SIDE_PX (4096) on width while keeping height small for a fast test.
+        let rendered = backend
+            .render_page(0, 4200, 80)
+            .expect("clamped render succeeds");
+
+        assert_eq!(rendered.width_px, super::super::MAX_RENDER_SIDE_PX);
+
+        let pixels = rendered.rgba.as_chunks::<4>().0;
+        assert!(
+            pixels.iter().any(|px| px[0] < 200),
+            "expected dark text ink pixels in clamped render"
+        );
+        assert!(
+            pixels
+                .iter()
+                .all(|px| px[0] == px[1] && px[1] == px[2] && px[3] == 255),
+            "expected clamped renders to disable LCD subpixel AA and stay pure grayscale"
+        );
     }
 }

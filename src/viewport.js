@@ -729,9 +729,9 @@ export function createViewport({ viewportEl, trackEl, textLayer, onViewStateChan
     }
     const step = Math.max(80, Math.round((viewportEl.clientHeight || 600) * 0.9));
     const maxScrollTop = Math.max(0, viewportEl.scrollHeight - viewportEl.clientHeight);
-    viewportEl.scrollTop = Math.max(
-      0,
-      Math.min(viewportEl.scrollTop + direction * step, maxScrollTop),
+    viewportEl.scrollTop = snapToDevicePixels(
+      Math.max(0, Math.min(viewportEl.scrollTop + direction * step, maxScrollTop)),
+      currentDpr,
     );
     notifyViewState(false);
     scheduleVisibleRenders();

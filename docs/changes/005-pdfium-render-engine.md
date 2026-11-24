@@ -59,7 +59,7 @@ The v1 baseline statically linked `mupdf` (`0.8`, `AGPL-3.0`) via `mupdf-sys`, r
 ## 5. Coordinate Projection, Rendering, Outline, Text & Search
 
 - **Rasterization (`render_page`)**:
-  - Uses `PdfRenderConfig::new().set_fixed_size(target_w, target_h)` (after `clamp_render_dimensions` `<= 4096px`), opaque white clear (`PdfColor::WHITE`), annotations & form data enabled, grayscale anti-aliasing (`use_lcd_text_rendering(false)`), and PDFium's `FPDF_REVERSE_BYTE_ORDER` flag so `bitmap.as_rgba_bytes()` yields tightly packed `RGBA8` directly without an extra channel-swap copy.
+  - Uses `PdfRenderConfig::new().set_fixed_size(target_w, target_h)` (after `clamp_render_dimensions` `<= 4096px`), opaque `PdfBitmapFormat::BGRx` cleared to `PdfColor::WHITE`, annotations & form data enabled, LCD subpixel text anti-aliasing (`use_lcd_text_rendering(true)`) at native 1:1 physical pixel sizes (falling back to grayscale when clamped so CSS upscaling avoids magnified RGB fringes), and PDFium's `FPDF_REVERSE_BYTE_ORDER` flag so `bitmap.as_rgba_bytes()` yields tightly packed opaque `RGBA8` directly without an extra channel-swap copy.
 - **Coordinate projection (`normalize_pdfium_rect`)**:
   - Projects bottom-left PDF user-space rectangles through the page's visible box (`CropBox ∩ MediaBox`, falling back to available box/dimensions) and clockwise `/Rotate` (`0°`, `90°`, `180°`, `270°`) into top-left `[0.0, 1.0]` `NormalizedRect` coordinates.
 - **Outline (`outline`)**:
