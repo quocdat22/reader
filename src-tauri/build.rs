@@ -4,6 +4,7 @@ use std::env;
 use std::path::Path;
 
 fn main() {
+    println!("cargo:rerun-if-changed=icons/icon.ico");
     println!("cargo:rerun-if-changed=resources/pdfium.dll");
     println!("cargo:rerun-if-env-changed=PDFIUM_LIB_PATH");
     println!("cargo:rerun-if-env-changed=PDFIUM_DYNAMIC_LIB_PATH");
