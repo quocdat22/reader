@@ -228,6 +228,8 @@ Apply `.agents/skills/frontend-design/SKILL.md` (two-pass design plan + self-cri
 > **Amended by [CR-002](changes/002-integrated-titlebar-window-controls.md#3-window-chrome--layout)**: In the `0`-tab Home state, `#app-chrome` stays visible so the borderless `#tab-strip` provides a seamless top drag region and right-aligned window controls above `#empty-state`.
 >
 > **Amended by [CR-004](changes/004-paginated-unbounded-recents.md#4-paginated-recent-section-ui)**: `#recent-section` paginates the unbounded `recent_files` history at 10 items per page with compact header pagination controls when more than 10 entries exist.
+>
+> **Amended by [CR-006](changes/006-home-recent-search.md#3-recent-header-search-ui)**: `.recent-header` includes a compact client-side search input filtering recent files by title and path alongside pagination.
 
 ### Frontend Module Structure (`src/`)
 ```text
@@ -274,6 +276,8 @@ src/
 > **Amended by [CR-001](changes/001-tab-add-home-screen.md#5-keyboard-shortcuts-and-focus-rules)**: `Ctrl+W`, `Ctrl+Tab`/`Ctrl+Shift+Tab`, and `Ctrl+1..9` include the singleton `Home` tab when open; document-only shortcuts remain inactive while `Home` is active.
 >
 > **Amended by [CR-003](changes/003-tab-strip-reorder.md#4-keyboard-reordering--shortcut-order)**: Focused tabs support `Ctrl+Shift+ArrowLeft` / `Ctrl+Shift+ArrowRight` to reorder tabs; `Ctrl+Tab` and `Ctrl+1..9` follow the reordered tab order.
+>
+> **Amended by [CR-006](changes/006-home-recent-search.md#4-filtering--keyboard-rules)**: `Ctrl+F` focuses the Home recent-files search input when Home displays recent history; `Esc` clears a non-empty filter before blurring.
 
 ---
 

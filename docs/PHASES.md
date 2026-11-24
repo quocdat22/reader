@@ -110,6 +110,8 @@ Execute phases sequentially. Complete every item in a phase's **Exit Gate** befo
 > **Amended by [CR-003](changes/003-tab-strip-reorder.md#5-verification-checklist)**: Tabs support horizontal pointer drag-and-drop and keyboard (`Ctrl+Shift+ArrowLeft`/`Right`) reordering; see CR-003 for verification checks.
 >
 > **Amended by [CR-004](changes/004-paginated-unbounded-recents.md#5-verification-checklist)**: `src/empty-state.js` paginates `recent_files` at 10 items per page when more than 10 files exist; see CR-004 for verification checks.
+>
+> **Amended by [CR-006](changes/006-home-recent-search.md#5-verification-checklist)**: `.recent-header` in `src/empty-state.js` supports live filtering across recent file titles and paths; see CR-006 for verification checks.
 
 ---
 

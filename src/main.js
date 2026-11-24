@@ -319,11 +319,14 @@ async function bootstrap() {
     errorDismissBtnEl: document.getElementById("empty-error-dismiss"),
     recentSectionEl: document.getElementById("recent-section"),
     recentRangeEl: document.getElementById("recent-range"),
+    recentSearchInputEl: document.getElementById("recent-search-input"),
+    recentSearchClearEl: document.getElementById("recent-search-clear"),
     recentPaginationEl: document.getElementById("recent-pagination"),
     recentPrevBtnEl: document.getElementById("recent-prev-btn"),
     recentNextBtnEl: document.getElementById("recent-next-btn"),
     recentPageListEl: document.getElementById("recent-page-list"),
     recentListEl: document.getElementById("recent-list"),
+    recentEmptyEl: document.getElementById("recent-empty"),
     onOpenDialog: () => {
       void handleOpenViaDialog();
     },
@@ -445,6 +448,7 @@ async function bootstrap() {
 
       viewport.focus();
       emptyState.resetRecentPage();
+      emptyState.clearRecentSearch();
       void refreshRecents();
       return { ok: true, error: null };
     } catch (err) {
@@ -638,6 +642,9 @@ async function bootstrap() {
       if (active) {
         search.openForTab(active);
       }
+    },
+    onOpenHomeSearch: () => {
+      emptyState.focusSearch();
     },
     onCloseSearch: () => {
       const active = tabManager.getActiveDocument();

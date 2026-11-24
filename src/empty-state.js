@@ -5,6 +5,28 @@
 export const RECENTS_PAGE_SIZE = 10;
 
 /**
+ * Filters recent files case-insensitively across title and full path.
+ * Multiple whitespace-separated tokens must all match.
+ * @param {Array<{ path: string, title: string }>} recentFiles
+ * @param {string} query
+ * @returns {Array<{ path: string, title: string, last_page: number, page_count: number }>}
+ */
+export function filterRecentFiles(recentFiles, query) {
+  if (!Array.isArray(recentFiles)) {
+    return [];
+  }
+  const normalized = typeof query === "string" ? query.trim().toLowerCase() : "";
+  if (normalized.length === 0) {
+    return recentFiles;
+  }
+  const tokens = normalized.split(/\s+/).filter(Boolean);
+  return recentFiles.filter((item) => {
+    const haystack = `${item?.title || ""}\n${item?.path || ""}`.toLowerCase();
+    return tokens.every((token) => haystack.includes(token));
+  });
+}
+
+/**
  * Computes page numbers and ellipsis markers for compact pagination controls.
  * @param {number} currentPage
  * @param {number} totalPages
@@ -106,11 +128,14 @@ export function formatOpenError(err, context = {}) {
  *   errorDismissBtnEl: HTMLButtonElement,
  *   recentSectionEl: HTMLElement,
  *   recentRangeEl: HTMLElement,
+ *   recentSearchInputEl: HTMLInputElement,
+ *   recentSearchClearEl: HTMLButtonElement,
  *   recentPaginationEl: HTMLElement,
  *   recentPrevBtnEl: HTMLButtonElement,
  *   recentNextBtnEl: HTMLButtonElement,
  *   recentPageListEl: HTMLElement,
  *   recentListEl: HTMLUListElement,
+ *   recentEmptyEl: HTMLElement,
  *   onOpenDialog: () => void,
  *   onOpenRecent: (path: string) => void,
  *   onRemoveRecent: (path: string) => void,
@@ -124,11 +149,14 @@ export function createEmptyState({
   errorDismissBtnEl,
   recentSectionEl,
   recentRangeEl,
+  recentSearchInputEl,
+  recentSearchClearEl,
   recentPaginationEl,
   recentPrevBtnEl,
   recentNextBtnEl,
   recentPageListEl,
   recentListEl,
+  recentEmptyEl,
   onOpenDialog,
   onOpenRecent,
   onRemoveRecent,
@@ -137,7 +165,24 @@ export function createEmptyState({
   let pendingErrorAction = null;
   /** @type {Array<{ path: string, title: string, last_page: number, page_count: number }>} */
   let allRecentFiles = [];
+  let searchQuery = "";
   let currentPage = 1;
+
+  function getFilteredFiles() {
+    return filterRecentFiles(allRecentFiles, searchQuery);
+  }
+
+  function clearSearch({ focusInput = false } = {}) {
+    searchQuery = "";
+    if (recentSearchInputEl.value !== "") {
+      recentSearchInputEl.value = "";
+    }
+    currentPage = 1;
+    renderCurrentPage();
+    if (focusInput) {
+      recentSearchInputEl.focus();
+    }
+  }
 
   openBtnEl.addEventListener("click", () => {
     onOpenDialog();
@@ -161,6 +206,49 @@ export function createEmptyState({
     }
   });
 
+  recentSearchInputEl.addEventListener("input", () => {
+    searchQuery = recentSearchInputEl.value;
+    currentPage = 1;
+    renderCurrentPage();
+  });
+
+  recentSearchInputEl.addEventListener("keydown", (event) => {
+    if (event.isComposing || event.keyCode === 229) {
+      return;
+    }
+    if (
+      event.key === "Escape" &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      !event.altKey &&
+      !event.shiftKey
+    ) {
+      if (searchQuery.length > 0) {
+        event.preventDefault();
+        event.stopPropagation();
+        clearSearch({ focusInput: true });
+      }
+      return;
+    }
+    if (
+      event.key === "ArrowDown" &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      !event.altKey &&
+      !event.shiftKey
+    ) {
+      const firstRowBtn = recentListEl.querySelector(".recent-row-btn");
+      if (firstRowBtn instanceof HTMLButtonElement) {
+        event.preventDefault();
+        firstRowBtn.focus();
+      }
+    }
+  });
+
+  recentSearchClearEl.addEventListener("click", () => {
+    clearSearch({ focusInput: true });
+  });
+
   recentPrevBtnEl.addEventListener("click", () => {
     if (currentPage > 1) {
       currentPage -= 1;
@@ -169,7 +257,7 @@ export function createEmptyState({
   });
 
   recentNextBtnEl.addEventListener("click", () => {
-    const totalPages = Math.ceil(allRecentFiles.length / RECENTS_PAGE_SIZE);
+    const totalPages = Math.ceil(getFilteredFiles().length / RECENTS_PAGE_SIZE);
     if (currentPage < totalPages) {
       currentPage += 1;
       renderCurrentPage();
@@ -324,21 +412,51 @@ export function createEmptyState({
     recentListEl.textContent = "";
 
     if (allRecentFiles.length === 0) {
+      searchQuery = "";
+      if (recentSearchInputEl.value !== "") {
+        recentSearchInputEl.value = "";
+      }
+      recentSearchClearEl.hidden = true;
       currentPage = 1;
       recentRangeEl.textContent = "";
       recentRangeEl.hidden = true;
       recentPageListEl.textContent = "";
       recentPaginationEl.hidden = true;
+      recentEmptyEl.hidden = true;
+      recentListEl.hidden = false;
       recentSectionEl.hidden = true;
       return;
     }
 
-    const totalPages = Math.ceil(allRecentFiles.length / RECENTS_PAGE_SIZE);
+    if (recentSearchInputEl.value !== searchQuery) {
+      recentSearchInputEl.value = searchQuery;
+    }
+    recentSearchClearEl.hidden = searchQuery.length === 0;
+
+    const hasQuery = searchQuery.trim().length > 0;
+    const filteredFiles = getFilteredFiles();
+
+    if (filteredFiles.length === 0) {
+      currentPage = 1;
+      recentListEl.hidden = true;
+      recentEmptyEl.hidden = false;
+      recentRangeEl.textContent = "0 matches";
+      recentRangeEl.hidden = false;
+      recentPageListEl.textContent = "";
+      recentPaginationEl.hidden = true;
+      recentSectionEl.hidden = false;
+      return;
+    }
+
+    recentEmptyEl.hidden = true;
+    recentListEl.hidden = false;
+
+    const totalPages = Math.ceil(filteredFiles.length / RECENTS_PAGE_SIZE);
     currentPage = Math.max(1, Math.min(currentPage, totalPages));
 
     const startIndex = (currentPage - 1) * RECENTS_PAGE_SIZE;
-    const endIndex = Math.min(startIndex + RECENTS_PAGE_SIZE, allRecentFiles.length);
-    const pageItems = allRecentFiles.slice(startIndex, endIndex);
+    const endIndex = Math.min(startIndex + RECENTS_PAGE_SIZE, filteredFiles.length);
+    const pageItems = filteredFiles.slice(startIndex, endIndex);
 
     const fragment = document.createDocumentFragment();
     for (const item of pageItems) {
@@ -347,10 +465,16 @@ export function createEmptyState({
     recentListEl.appendChild(fragment);
 
     if (totalPages > 1) {
-      recentRangeEl.textContent = `${startIndex + 1}–${endIndex} of ${allRecentFiles.length}`;
+      recentRangeEl.textContent = `${startIndex + 1}–${endIndex} of ${filteredFiles.length}`;
       recentRangeEl.hidden = false;
       recentPaginationEl.hidden = false;
       renderPagination(totalPages, restorePageFocus);
+    } else if (hasQuery) {
+      recentRangeEl.textContent =
+        filteredFiles.length === 1 ? "1 match" : `${filteredFiles.length} matches`;
+      recentRangeEl.hidden = false;
+      recentPageListEl.textContent = "";
+      recentPaginationEl.hidden = true;
     } else {
       recentRangeEl.textContent = "";
       recentRangeEl.hidden = true;
@@ -378,9 +502,24 @@ export function createEmptyState({
     currentPage = 1;
   }
 
+  function clearRecentSearch() {
+    clearSearch();
+  }
+
+  function focusSearch() {
+    if (allRecentFiles.length === 0 || recentSectionEl.hidden) {
+      return false;
+    }
+    recentSearchInputEl.focus();
+    recentSearchInputEl.select();
+    return true;
+  }
+
   return {
     renderRecents,
     resetRecentPage,
+    clearRecentSearch,
+    focusSearch,
     showError,
     clearError,
   };

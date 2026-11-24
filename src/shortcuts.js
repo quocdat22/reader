@@ -79,6 +79,7 @@ function isZoomResetKey(event) {
  *   onSwitchAdjacentTab: (delta: 1 | -1) => void,
  *   onJumpToTabNumber: (digit: number) => void,
  *   onOpenSearch?: () => void,
+ *   onOpenHomeSearch?: () => void,
  *   onCloseSearch?: () => void,
  *   onNextSearchMatch?: () => void,
  *   onPrevSearchMatch?: () => void,
@@ -103,6 +104,7 @@ export function installShortcuts({
   onSwitchAdjacentTab,
   onJumpToTabNumber,
   onOpenSearch,
+  onOpenHomeSearch,
   onCloseSearch,
   onNextSearchMatch,
   onPrevSearchMatch,
@@ -208,6 +210,8 @@ export function installShortcuts({
         event.preventDefault();
         if (hasActiveDocument()) {
           onOpenSearch?.();
+        } else {
+          onOpenHomeSearch?.();
         }
         return;
       }
