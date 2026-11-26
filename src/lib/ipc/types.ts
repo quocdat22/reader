@@ -12,6 +12,7 @@ export type ErrorCode =
   | "page_out_of_range"
   | "document_not_found"
   | "cancelled"
+  | "unsupported_uri"
   | "internal";
 
 export interface ErrorResponse {
@@ -80,4 +81,26 @@ export interface TextSpan {
 export interface SearchMatch {
   readonly page_index: number;
   readonly rects: NormalizedRect[];
+}
+
+export interface NormalizedPoint {
+  readonly x: number;
+  readonly y: number;
+}
+
+export type LinkTarget =
+  | {
+      readonly kind: "internal";
+      readonly page_index: number;
+      readonly target_point: NormalizedPoint | null;
+      readonly target_rect: NormalizedRect | null;
+    }
+  | {
+      readonly kind: "external";
+      readonly uri: string;
+    };
+
+export interface PageLink {
+  readonly rects: NormalizedRect[];
+  readonly target: LinkTarget;
 }

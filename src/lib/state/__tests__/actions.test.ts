@@ -86,6 +86,8 @@ function createFakeApi(overrides: Partial<ReaderApi> = {}) {
     },
     getOutline: async () => [],
     getPageText: async () => [],
+    getPageLinks: async () => [],
+    openExternalUrl: async () => {},
     searchDocument: async () => [],
     saveReadingState: async (params) => {
       savedCalls.push(params);
@@ -656,5 +658,150 @@ describe("Runes AppStore + AppActions", () => {
       "/raw/doc.pdf",
       "/canonical/doc.pdf",
     ]);
+  });
+
+  it("supports CR-009 internal link jumps, TOC/page jumps, per-tab Back/Forward history, and external URI errors", async () => {
+    let seq = 0;
+    let viewPage = 1;
+    let viewScrollTop = 420;
+    const scrolledPages: number[] = [];
+    const scrolledTargets: Array<{ pageIndex: number }> = [];
+    const scrolledAnchors: Array<{ pageIndex: number }> = [];
+    const openedUrls: string[] = [];
+    let pendingExternal = createDeferred<void>();
+    let failExternal = false;
+
+    const { store, actions } = createHarness(
+      {
+        openDocument: async (path) => makeOpenResponse(++seq, path),
+        openExternalUrl: async (url) => {
+          openedUrls.push(url);
+          if (failExternal) {
+            return pendingExternal.promise;
+          }
+        },
+      },
+      {
+        captureViewportSnapshot: (doc) => ({
+          documentId: doc.documentId,
+          pageIndex: viewPage,
+          scrollTop: viewScrollTop,
+          scrollAnchor: { pageIndex: viewPage, topOffsetRatio: 0.25 },
+          zoomMode: "fit_width",
+          zoomScale: 1.0,
+        }),
+        viewportCommands: {
+          scrollToPage: (pageIndex) => {
+            scrolledPages.push(pageIndex);
+            viewPage = pageIndex;
+            viewScrollTop = pageIndex * 400;
+          },
+          scrollToTarget: (target) => {
+            scrolledTargets.push({ pageIndex: target.pageIndex });
+            viewPage = target.pageIndex;
+            viewScrollTop = target.pageIndex * 400;
+          },
+          scrollToAnchor: (target) => {
+            scrolledAnchors.push({ pageIndex: target.pageIndex });
+            viewPage = target.pageIndex;
+            viewScrollTop = target.pageIndex * 400;
+          },
+        },
+      },
+    );
+    cleanups.push(() => actions.dispose());
+
+    await actions.openPath("/virtual/links-a.pdf");
+    expect(store.toolbarModel?.canGoBack).toBe(false);
+    expect(store.toolbarModel?.canGoForward).toBe(false);
+
+    // Internal link jump records origin on Back stack and calls scrollToTarget.
+    await actions.activatePageLink(1, {
+      rects: [{ x: 0.1, y: 0.2, width: 0.3, height: 0.04 }],
+      target: {
+        kind: "internal",
+        page_index: 5,
+        target_point: { x: 0.25, y: 0.5 },
+        target_rect: null,
+      },
+    });
+
+    expect(scrolledTargets).toEqual([{ pageIndex: 5 }]);
+    expect(store.toolbarModel?.canGoBack).toBe(true);
+    expect(store.toolbarModel?.canGoForward).toBe(false);
+
+    // Toolbar page jump records intermediate position before jumping.
+    actions.requestJumpToPage(7);
+    expect(scrolledPages).toEqual([7]);
+    expect(store.toolbarModel?.canGoBack).toBe(true);
+
+    // Back twice returns to page 5 then page 1, enabling Forward.
+    actions.navigateHistory(-1);
+    expect(scrolledAnchors.at(-1)).toEqual({ pageIndex: 5 });
+    expect(store.toolbarModel?.canGoBack).toBe(true);
+    expect(store.toolbarModel?.canGoForward).toBe(true);
+
+    actions.navigateHistory(-1);
+    expect(scrolledAnchors.at(-1)).toEqual({ pageIndex: 1 });
+    expect(store.toolbarModel?.canGoBack).toBe(false);
+    expect(store.toolbarModel?.canGoForward).toBe(true);
+
+    // Forward steps to page 5.
+    actions.navigateHistory(1);
+    expect(scrolledAnchors.at(-1)).toEqual({ pageIndex: 5 });
+    expect(store.toolbarModel?.canGoForward).toBe(true);
+
+    // Switching to another tab isolates per-tab Back/Forward stacks.
+    await actions.openPath("/virtual/links-b.pdf");
+    expect(store.toolbarModel?.canGoBack).toBe(false);
+    expect(store.toolbarModel?.canGoForward).toBe(false);
+
+    await actions.selectTab("doc-1");
+    expect(store.toolbarModel?.canGoBack).toBe(true);
+    expect(store.toolbarModel?.canGoForward).toBe(true);
+
+    // External link opens directly on success.
+    await actions.activatePageLink(1, {
+      rects: [{ x: 0.1, y: 0.4, width: 0.3, height: 0.04 }],
+      target: {
+        kind: "external",
+        uri: "https://example.com/docs",
+      },
+    });
+    expect(openedUrls).toEqual(["https://example.com/docs"]);
+    expect(store.banner).toBeNull();
+
+    // External link rejection surfaces user-facing workspace banner.
+    failExternal = true;
+    const rejectedLink = actions.activatePageLink(1, {
+      rects: [{ x: 0.1, y: 0.6, width: 0.3, height: 0.04 }],
+      target: {
+        kind: "external",
+        uri: "https://bad.example/file",
+      },
+    });
+    pendingExternal.reject(new ReaderApiError("unsupported_uri", "bad"));
+    await rejectedLink;
+
+    expect(store.banner).toEqual({
+      scope: "workspace",
+      message:
+        "Cannot open this link. Only http, https, and mailto links are supported.",
+    });
+    actions.dismissBanner();
+
+    // Closing the tab while external open is in-flight ignores late rejection.
+    pendingExternal = createDeferred<void>();
+    const inflightExternal = actions.activatePageLink(1, {
+      rects: [{ x: 0.1, y: 0.7, width: 0.3, height: 0.04 }],
+      target: {
+        kind: "external",
+        uri: "https://example.com/slow",
+      },
+    });
+    await actions.closeTab("doc-1");
+    pendingExternal.reject(new ReaderApiError("io", "failed"));
+    await inflightExternal;
+    expect(store.banner).toBeNull();
   });
 });

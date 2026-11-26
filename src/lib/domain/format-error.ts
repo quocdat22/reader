@@ -62,3 +62,22 @@ export function formatOpenError(
     }
   }
 }
+
+/**
+ * Formats an external link validation or launch failure into plain sentence-case copy.
+ */
+export function formatLinkError(err: unknown): string {
+  const code =
+    isRecord(err) && typeof err.code === "string" ? err.code : "internal";
+  if (code === "unsupported_uri") {
+    return "Cannot open this link. Only http, https, and mailto links are supported.";
+  }
+
+  const rawMsg =
+    err instanceof Error
+      ? err.message
+      : isRecord(err) && typeof err.message === "string"
+        ? err.message
+        : "";
+  return rawMsg.trim().length > 0 ? rawMsg : "Could not open external link.";
+}

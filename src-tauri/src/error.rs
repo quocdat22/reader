@@ -39,6 +39,10 @@ pub enum ReaderError {
     #[error("render request cancelled")]
     Cancelled,
 
+    /// External URI scheme or target is disallowed or invalid.
+    #[error("unsupported or invalid URI: {0}")]
+    UnsupportedUri(String),
+
     /// Unexpected internal backend or concurrency error.
     #[error("internal error: {0}")]
     Internal(String),
@@ -65,6 +69,7 @@ impl ReaderError {
             Self::PageOutOfRange { .. } => "page_out_of_range",
             Self::DocumentNotFound(_) => "document_not_found",
             Self::Cancelled => "cancelled",
+            Self::UnsupportedUri(_) => "unsupported_uri",
             Self::Internal(_) => "internal",
         }
     }
@@ -120,6 +125,10 @@ mod tests {
             "document_not_found"
         );
         assert_eq!(ReaderError::Cancelled.code(), "cancelled");
+        assert_eq!(
+            ReaderError::UnsupportedUri("bad".into()).code(),
+            "unsupported_uri"
+        );
         assert_eq!(ReaderError::Internal("boom".into()).code(), "internal");
     }
 

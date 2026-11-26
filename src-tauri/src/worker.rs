@@ -14,8 +14,8 @@ use serde::Serialize;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::backend::{
-    DocumentBackend, DocumentMetadata, OutlineItem, PageDimensions, RenderedPage, SearchMatch,
-    TextSpan, open,
+    DocumentBackend, DocumentMetadata, OutlineItem, PageDimensions, PageLink, RenderedPage,
+    SearchMatch, TextSpan, open,
 };
 use crate::covers::compute_cover_dimensions;
 use crate::error::ReaderError;
@@ -72,6 +72,11 @@ enum WorkerRequest {
         document_id: u64,
         page_index: usize,
         reply: oneshot::Sender<Result<Vec<TextSpan>, ReaderError>>,
+    },
+    PageLinks {
+        document_id: u64,
+        page_index: usize,
+        reply: oneshot::Sender<Result<Vec<PageLink>, ReaderError>>,
     },
     Search {
         document_id: u64,
@@ -263,6 +268,25 @@ impl DocumentWorker {
         await_reply(reply_rx).await
     }
 
+    /// Extracts normalized clickable links for `page_index` of `document_id`.
+    ///
+    /// # Errors
+    /// Returns [`ReaderError::DocumentNotFound`], [`ReaderError::PageOutOfRange`], or any
+    /// underlying backend error.
+    pub async fn get_page_links(
+        &self,
+        document_id: u64,
+        page_index: usize,
+    ) -> Result<Vec<PageLink>, ReaderError> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.send_request(WorkerRequest::PageLinks {
+            document_id,
+            page_index,
+            reply: reply_tx,
+        })?;
+        await_reply(reply_rx).await
+    }
+
     /// Searches `document_id` case-insensitively for `query`.
     ///
     /// # Errors
@@ -390,6 +414,17 @@ fn run_worker_loop(
                     .get(&document_id)
                     .ok_or(ReaderError::DocumentNotFound(document_id))
                     .and_then(|doc| doc.backend.page_text(page_index));
+                let _ = reply.send(result);
+            }
+            WorkerRequest::PageLinks {
+                document_id,
+                page_index,
+                reply,
+            } => {
+                let result = open_docs
+                    .get(&document_id)
+                    .ok_or(ReaderError::DocumentNotFound(document_id))
+                    .and_then(|doc| doc.backend.page_links(page_index));
                 let _ = reply.send(result);
             }
             WorkerRequest::Search {
@@ -750,6 +785,28 @@ mod tests {
             } else {
                 Ok(Vec::new())
             }
+        }
+
+        fn page_links(&self, page_index: usize) -> Result<Vec<PageLink>, ReaderError> {
+            if page_index >= self.dimensions.len() {
+                return Err(ReaderError::PageOutOfRange {
+                    page_index,
+                    page_count: self.dimensions.len(),
+                });
+            }
+            Ok(vec![PageLink {
+                rects: vec![NormalizedRect {
+                    x: 0.2,
+                    y: 0.2,
+                    width: 0.3,
+                    height: 0.04,
+                }],
+                target: crate::backend::LinkTarget::Internal {
+                    page_index: usize::from(self.dimensions.len() > 1),
+                    target_point: None,
+                    target_rect: None,
+                },
+            }])
         }
     }
 
@@ -1125,5 +1182,46 @@ mod tests {
         let flags = drop_flags.lock().expect("drop_flags lock");
         assert!(!flags[0].load(Ordering::SeqCst));
         assert!(flags[1].load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn get_page_links_forwards_to_backend_and_rejects_closed_tab() {
+        let dir = TempDirGuard::new("page-links");
+        let file = dir.create_dummy_pdf("links.pdf");
+
+        let open_calls = Arc::new(AtomicUsize::new(0));
+        let drop_flags = Arc::new(Mutex::new(Vec::new()));
+        let render_calls = Arc::new(AtomicUsize::new(0));
+
+        let worker = DocumentWorker::spawn_with_opener(make_mock_opener(
+            open_calls,
+            drop_flags,
+            render_calls,
+            None,
+        ))
+        .expect("spawn worker");
+
+        let doc = worker.open_document(file).await.expect("open doc");
+        let links = worker
+            .get_page_links(doc.document_id, 0)
+            .await
+            .expect("get_page_links should succeed");
+        assert_eq!(links.len(), 1);
+
+        let err = worker
+            .get_page_links(doc.document_id, 99)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ReaderError::PageOutOfRange { .. }));
+
+        worker
+            .close_document(doc.document_id)
+            .await
+            .expect("close doc");
+        let closed_err = worker.get_page_links(doc.document_id, 0).await.unwrap_err();
+        assert!(matches!(
+            closed_err,
+            ReaderError::DocumentNotFound(id) if id == doc.document_id
+        ));
     }
 }

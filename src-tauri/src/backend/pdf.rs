@@ -1,22 +1,25 @@
 //! `PDFium`-backed implementation of [`DocumentBackend`] using `pdfium-render`.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet, hash_map::Entry};
 use std::env;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use pdfium_render::prelude::{
-    PdfBitmapFormat, PdfBookmark, PdfColor, PdfDocument, PdfDocumentMetadataTagType, PdfPage,
+    PdfBitmapFormat, PdfBookmark, PdfColor, PdfDestination, PdfDestinationViewSettings,
+    PdfDocument, PdfDocumentMetadataTagType, PdfLink, PdfPage, PdfPageAnnotationCommon,
     PdfPageIndex, PdfPageRenderRotation, PdfRect, PdfRenderConfig, PdfSearchDirection,
     PdfSearchOptions, Pdfium, PdfiumError, PdfiumInternalError, Pixels,
 };
 
 use super::{
-    DocumentBackend, DocumentMetadata, NormalizedRect, OutlineItem, PageDimensions, PagePointsRect,
-    RenderedPage, SearchMatch, TextSpan, clamp_render_dimensions, normalize_top_left_rect,
+    DocumentBackend, DocumentMetadata, LinkTarget, NormalizedPoint, NormalizedRect, OutlineItem,
+    PageDimensions, PageLink, PagePointsRect, RenderedPage, SearchMatch, TextSpan,
+    clamp_render_dimensions, normalize_top_left_rect,
 };
 use crate::error::ReaderError;
+use crate::external::validate_external_url;
 
 /// Upper bound on recursive bookmark nesting depth to protect against pathological PDFs.
 const MAX_OUTLINE_DEPTH: usize = 64;
@@ -94,6 +97,10 @@ impl PageCoordinateFrame {
 
     fn normalize_pdf_rect(self, rect: PdfRect) -> Option<NormalizedRect> {
         normalize_pdfium_rect(rect, self.visible_box, self.rotation)
+    }
+
+    fn normalize_pdf_dest_point(self, x: Option<f32>, y: Option<f32>) -> Option<NormalizedPoint> {
+        normalize_pdfium_dest_point(x, y, self.visible_box, self.rotation)
     }
 
     fn to_visual_points(self, rect: PdfRect) -> Option<PagePointsRect> {
@@ -401,6 +408,191 @@ impl DocumentBackend for PdfBackend {
 
         Ok(matches)
     }
+
+    fn page_links(&self, page_index: usize) -> Result<Vec<PageLink>, ReaderError> {
+        let page = self.load_page(page_index)?;
+        let frame = PageCoordinateFrame::from_page(&page)?;
+        let mut dest_frames: HashMap<usize, PageCoordinateFrame> = HashMap::new();
+        let mut links = Vec::new();
+
+        for annot in page.annotations().iter() {
+            let Some(link_annot) = annot.as_link_annotation() else {
+                continue;
+            };
+            if link_annot.is_hidden() {
+                continue;
+            }
+            let Ok(link) = link_annot.link() else {
+                continue;
+            };
+
+            let rects = extract_link_rects(link_annot, &link, frame);
+            if rects.is_empty() {
+                continue;
+            }
+
+            let Some(target) = self.resolve_link_target(&link, &mut dest_frames) else {
+                continue;
+            };
+
+            links.push(PageLink { rects, target });
+        }
+
+        Ok(links)
+    }
+}
+
+impl PdfBackend {
+    fn resolve_link_target(
+        &self,
+        link: &PdfLink<'_>,
+        dest_frames: &mut HashMap<usize, PageCoordinateFrame>,
+    ) -> Option<LinkTarget> {
+        if let Some(destination) = link.destination() {
+            return self.build_internal_link_target(&destination, dest_frames);
+        }
+
+        let action = link.action()?;
+        if let Some(local) = action.as_local_destination_action() {
+            let destination = local.destination().ok()?;
+            return self.build_internal_link_target(&destination, dest_frames);
+        }
+
+        if let Some(uri_action) = action.as_uri_action() {
+            let raw_uri = uri_action.uri().ok()?;
+            let validated = validate_external_url(&raw_uri).ok()?;
+            return Some(LinkTarget::External {
+                uri: validated.into(),
+            });
+        }
+
+        None
+    }
+
+    fn build_internal_link_target(
+        &self,
+        destination: &PdfDestination<'_>,
+        dest_frames: &mut HashMap<usize, PageCoordinateFrame>,
+    ) -> Option<LinkTarget> {
+        let raw_index = destination.page_index().ok()?;
+        let page_index = usize::try_from(raw_index).ok()?;
+        if page_index >= self.page_dimensions.len() {
+            return None;
+        }
+
+        let frame = match dest_frames.entry(page_index) {
+            Entry::Occupied(entry) => *entry.get(),
+            Entry::Vacant(entry) => {
+                let target_page = self.load_page(page_index).ok()?;
+                let loaded_frame = PageCoordinateFrame::from_page(&target_page).ok()?;
+                *entry.insert(loaded_frame)
+            }
+        };
+
+        let (target_point, target_rect) = match destination.view_settings() {
+            Ok(PdfDestinationViewSettings::SpecificCoordinatesAndZoom(x, y, _)) => (
+                frame.normalize_pdf_dest_point(x.map(|p| p.value), y.map(|p| p.value)),
+                None,
+            ),
+            Ok(
+                PdfDestinationViewSettings::FitPageHorizontallyToWindow(top)
+                | PdfDestinationViewSettings::FitBoundsHorizontallyToWindow(top),
+            ) => (
+                frame.normalize_pdf_dest_point(None, top.map(|p| p.value)),
+                None,
+            ),
+            Ok(
+                PdfDestinationViewSettings::FitPageVerticallyToWindow(left)
+                | PdfDestinationViewSettings::FitBoundsVerticallyToWindow(left),
+            ) => (
+                frame.normalize_pdf_dest_point(left.map(|p| p.value), None),
+                None,
+            ),
+            Ok(PdfDestinationViewSettings::FitPageToRectangle(rect)) => (
+                None,
+                frame.normalize_pdf_rect(rect).filter(|r| !r.is_empty()),
+            ),
+            Ok(
+                PdfDestinationViewSettings::FitPageToWindow
+                | PdfDestinationViewSettings::FitBoundsToWindow
+                | PdfDestinationViewSettings::Unknown,
+            )
+            | Err(_) => (None, None),
+        };
+
+        Some(LinkTarget::Internal {
+            page_index,
+            target_point,
+            target_rect,
+        })
+    }
+}
+
+fn extract_link_rects(
+    link_annot: &pdfium_render::prelude::PdfPageLinkAnnotation<'_>,
+    link: &PdfLink<'_>,
+    frame: PageCoordinateFrame,
+) -> Vec<NormalizedRect> {
+    let mut rects: Vec<NormalizedRect> = link_annot
+        .attachment_points()
+        .iter()
+        .filter_map(|quad| {
+            let rect = frame.normalize_pdf_rect(quad.to_rect())?;
+            (!rect.is_empty()).then_some(rect)
+        })
+        .collect();
+
+    if rects.is_empty()
+        && let Some(raw_rect) = link.rect().ok().or_else(|| link_annot.bounds().ok())
+        && let Some(rect) = frame.normalize_pdf_rect(raw_rect)
+        && !rect.is_empty()
+    {
+        rects.push(rect);
+    }
+
+    rects
+}
+
+fn normalize_pdfium_dest_point(
+    x: Option<f32>,
+    y: Option<f32>,
+    visible_box: PdfRect,
+    rotation: PdfPageRenderRotation,
+) -> Option<NormalizedPoint> {
+    if !is_valid_pdf_rect(visible_box) {
+        return None;
+    }
+
+    let box_left = visible_box.left().value;
+    let box_bottom = visible_box.bottom().value;
+    let box_width = visible_box.right().value - box_left;
+    let box_height = visible_box.top().value - box_bottom;
+
+    let u_opt = x
+        .filter(|v| v.is_finite())
+        .map(|px| (px - box_left) / box_width);
+    let v_opt = y
+        .filter(|v| v.is_finite())
+        .map(|py| (py - box_bottom) / box_height);
+
+    if u_opt.is_none() && v_opt.is_none() {
+        return None;
+    }
+
+    let (vis_x, vis_y) = match rotation {
+        PdfPageRenderRotation::None => (u_opt.unwrap_or(0.0), v_opt.map_or(0.0, |v| 1.0 - v)),
+        PdfPageRenderRotation::Degrees90 => (v_opt.unwrap_or(0.0), u_opt.unwrap_or(0.0)),
+        PdfPageRenderRotation::Degrees180 => (u_opt.map_or(0.0, |u| 1.0 - u), v_opt.unwrap_or(0.0)),
+        PdfPageRenderRotation::Degrees270 => (
+            v_opt.map_or(0.0, |v| 1.0 - v),
+            u_opt.map_or(0.0, |u| 1.0 - u),
+        ),
+    };
+
+    Some(NormalizedPoint {
+        x: vis_x.clamp(0.0, 1.0),
+        y: vis_y.clamp(0.0, 1.0),
+    })
 }
 
 fn get_pdfium() -> Result<&'static Pdfium, ReaderError> {
@@ -1325,5 +1517,204 @@ mod tests {
                 .all(|px| px[0] == px[1] && px[1] == px[2] && px[3] == 255),
             "expected clamped renders to disable LCD subpixel AA and stay pure grayscale"
         );
+    }
+
+    fn build_pdf_from_objects(objects: &[String]) -> Vec<u8> {
+        let mut out = String::from("%PDF-1.4\n");
+        let mut offsets = Vec::with_capacity(objects.len());
+        for obj in objects {
+            offsets.push(out.len());
+            out.push_str(obj);
+        }
+
+        let xref_offset = out.len();
+        let _ = writeln!(out, "xref\n0 {}", objects.len() + 1);
+        out.push_str("0000000000 65535 f \n");
+        for offset in offsets {
+            let _ = writeln!(out, "{offset:010} 00000 n ");
+        }
+        let _ = writeln!(
+            out,
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF",
+            objects.len() + 1
+        );
+
+        out.into_bytes()
+    }
+
+    #[test]
+    fn page_links_extracts_internal_quadpoints_external_and_filters_unsafe_or_hidden() {
+        let dir = TempDirGuard::new("links-extract");
+        let objects = [
+            "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n".to_owned(),
+            "2 0 obj\n<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>\nendobj\n".to_owned(),
+            "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 400] /Annots [5 0 R 6 0 R 7 0 R 8 0 R 9 0 R] >>\nendobj\n".to_owned(),
+            "4 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 400] >>\nendobj\n".to_owned(),
+            "5 0 obj\n<< /Type /Annot /Subtype /Link /Rect [50 300 180 330] /Dest [4 0 R /XYZ 60 250 0] >>\nendobj\n".to_owned(),
+            "6 0 obj\n<< /Type /Annot /Subtype /Link /Rect [40 150 260 200] /QuadPoints [160 180 260 180 260 200 160 200 40 150 140 150 140 170 40 170] /A << /S /GoTo /D [4 0 R /FitH 300] >> >>\nendobj\n".to_owned(),
+            "7 0 obj\n<< /Type /Annot /Subtype /Link /Rect [20 40 200 70] /A << /S /URI /URI (https://example.com/guide?p=1#top) >> >>\nendobj\n".to_owned(),
+            "8 0 obj\n<< /Type /Annot /Subtype /Link /Rect [20 80 120 100] /A << /S /URI /URI (javascript:alert\\(1\\)) >> >>\nendobj\n".to_owned(),
+            "9 0 obj\n<< /Type /Annot /Subtype /Link /F 2 /Rect [20 110 120 130] /A << /S /URI /URI (https://hidden.example.com/) >> >>\nendobj\n".to_owned(),
+        ];
+
+        let pdf_path = dir.write_file("links.pdf", &build_pdf_from_objects(&objects));
+        let backend = PdfBackend::open(&pdf_path).expect("links PDF should open");
+
+        let links = backend.page_links(0).expect("extract page 0 links");
+        assert_eq!(links.len(), 3, "unsafe and hidden links must be excluded");
+
+        assert_eq!(links[0].rects.len(), 1);
+        assert_approx(links[0].rects[0].x, 50.0 / 300.0, 1e-4);
+        assert_approx(links[0].rects[0].y, (400.0 - 330.0) / 400.0, 1e-4);
+        assert_approx(links[0].rects[0].width, 130.0 / 300.0, 1e-4);
+        assert_approx(links[0].rects[0].height, 30.0 / 400.0, 1e-4);
+        assert_eq!(
+            links[0].target,
+            LinkTarget::Internal {
+                page_index: 1,
+                target_point: Some(NormalizedPoint {
+                    x: 60.0 / 300.0,
+                    y: (400.0 - 250.0) / 400.0,
+                }),
+                target_rect: None,
+            }
+        );
+
+        assert_eq!(links[1].rects.len(), 2, "QuadPoints should yield 2 rects");
+        assert_approx(links[1].rects[0].x, 160.0 / 300.0, 1e-4);
+        assert_approx(links[1].rects[1].x, 40.0 / 300.0, 1e-4);
+        assert_eq!(
+            links[1].target,
+            LinkTarget::Internal {
+                page_index: 1,
+                target_point: Some(NormalizedPoint {
+                    x: 0.0,
+                    y: (400.0 - 300.0) / 400.0,
+                }),
+                target_rect: None,
+            }
+        );
+
+        assert_eq!(
+            links[2].target,
+            LinkTarget::External {
+                uri: "https://example.com/guide?p=1#top".to_owned(),
+            }
+        );
+
+        assert_eq!(
+            backend.page_links(1).expect("page 1 links"),
+            Vec::<PageLink>::new()
+        );
+        assert!(matches!(
+            backend.page_links(2),
+            Err(ReaderError::PageOutOfRange {
+                page_index: 2,
+                page_count: 2
+            })
+        ));
+    }
+
+    #[test]
+    fn normalize_pdfium_dest_point_handles_cropbox_and_all_rotations() {
+        // Visible crop box: width = 400 (x in 100..500), height = 600 (y in 50..650).
+        // Point (x = 180 -> u = 0.2, y = 530 -> v = 0.8).
+        let crop_box = PdfRect::new_from_values(50.0, 100.0, 650.0, 500.0);
+
+        let p0 = normalize_pdfium_dest_point(
+            Some(180.0),
+            Some(530.0),
+            crop_box,
+            PdfPageRenderRotation::None,
+        )
+        .expect("p0");
+        assert_approx(p0.x, 0.2, 1e-5);
+        assert_approx(p0.y, 0.2, 1e-5);
+
+        let p90 = normalize_pdfium_dest_point(
+            Some(180.0),
+            Some(530.0),
+            crop_box,
+            PdfPageRenderRotation::Degrees90,
+        )
+        .expect("p90");
+        assert_approx(p90.x, 0.8, 1e-5);
+        assert_approx(p90.y, 0.2, 1e-5);
+
+        let p180 = normalize_pdfium_dest_point(
+            Some(180.0),
+            Some(530.0),
+            crop_box,
+            PdfPageRenderRotation::Degrees180,
+        )
+        .expect("p180");
+        assert_approx(p180.x, 0.8, 1e-5);
+        assert_approx(p180.y, 0.8, 1e-5);
+
+        let p270 = normalize_pdfium_dest_point(
+            Some(180.0),
+            Some(530.0),
+            crop_box,
+            PdfPageRenderRotation::Degrees270,
+        )
+        .expect("p270");
+        assert_approx(p270.x, 0.2, 1e-5);
+        assert_approx(p270.y, 0.8, 1e-5);
+
+        assert_eq!(
+            normalize_pdfium_dest_point(None, None, crop_box, PdfPageRenderRotation::None),
+            None
+        );
+    }
+
+    #[test]
+    fn page_links_align_with_cropbox_and_rotations_end_to_end() {
+        let dir = TempDirGuard::new("links-rotate-crop");
+
+        for rotate in [0_u16, 90, 180, 270] {
+            let rotate_entry = if rotate == 0 {
+                String::new()
+            } else {
+                format!(" /Rotate {rotate}")
+            };
+            let objects = [
+                "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n".to_owned(),
+                "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n".to_owned(),
+                format!(
+                    "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /CropBox [100 50 500 650]{rotate_entry} /Annots [4 0 R] >>\nendobj\n"
+                ),
+                // u in [0.1, 0.3], v in [0.6, 0.8]
+                "4 0 obj\n<< /Type /Annot /Subtype /Link /Rect [140 410 220 530] /Dest [3 0 R /FitR 140 410 220 530] >>\nendobj\n".to_owned(),
+            ];
+            let pdf_path = dir.write_file(
+                &format!("link-rot-{rotate}.pdf"),
+                &build_pdf_from_objects(&objects),
+            );
+            let backend = PdfBackend::open(&pdf_path).expect("rotated link PDF should open");
+            let links = backend.page_links(0).expect("extract links");
+
+            assert_eq!(links.len(), 1);
+            let LinkTarget::Internal {
+                page_index,
+                target_rect,
+                ..
+            } = &links[0].target
+            else {
+                panic!("expected internal link target");
+            };
+            assert_eq!(*page_index, 0);
+            let dest_rect = target_rect.expect("FitR should normalize target_rect");
+            assert_eq!(links[0].rects[0], dest_rect);
+
+            let (expected_x, expected_y) = match rotate {
+                0 => (0.1, 0.2),
+                90 => (0.6, 0.1),
+                180 => (0.7, 0.6),
+                270 => (0.2, 0.7),
+                _ => unreachable!(),
+            };
+            assert_approx(links[0].rects[0].x, expected_x, 1e-4);
+            assert_approx(links[0].rects[0].y, expected_y, 1e-4);
+        }
     }
 }

@@ -4,6 +4,7 @@ pub mod backend;
 pub mod commands;
 pub mod covers;
 pub mod error;
+pub mod external;
 pub mod state;
 pub mod worker;
 
@@ -35,10 +36,12 @@ pub fn run() {
             commands::render_page,
             commands::get_outline,
             commands::get_page_text,
+            commands::get_page_links,
             commands::search_document,
             commands::save_reading_state,
             commands::remove_recent_file,
             commands::get_recent_cover,
+            commands::open_external_url,
         ])
         .run(tauri::generate_context!());
 

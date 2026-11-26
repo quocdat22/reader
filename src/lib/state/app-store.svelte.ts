@@ -1,4 +1,5 @@
 import { SvelteMap, type SvelteSet } from "svelte/reactivity";
+import type { NavLocation } from "../domain/history";
 import type { OutlineModel } from "../domain/outline";
 import {
   RECENTS_PAGE_SIZE,
@@ -19,6 +20,7 @@ import {
   HOME_TAB_ID,
   toDocumentTabId,
   type BannerState,
+  type DocHistoryState,
   type DocOutlineState,
   type DocSearchState,
   type DocState,
@@ -84,6 +86,11 @@ class ReactiveDocSearch implements DocSearchState {
   scrollToMatchSeq = $state(0);
 }
 
+class ReactiveDocHistory implements DocHistoryState {
+  backStack = $state.raw<NavLocation[]>([]);
+  forwardStack = $state.raw<NavLocation[]>([]);
+}
+
 class ReactiveDocState implements DocState {
   readonly documentId: number;
   readonly canonicalPath: string;
@@ -93,6 +100,7 @@ class ReactiveDocState implements DocState {
   view: DocViewState;
   outline: DocOutlineState;
   search: DocSearchState;
+  history: DocHistoryState;
 
   constructor(response: OpenDocumentResponse) {
     const saved = response.saved_position;
@@ -127,6 +135,7 @@ class ReactiveDocState implements DocState {
     });
     this.outline = new ReactiveDocOutline();
     this.search = new ReactiveDocSearch();
+    this.history = new ReactiveDocHistory();
   }
 }
 
@@ -222,6 +231,8 @@ export function createAppStore(): AppStore {
           zoomScale: activeDoc.view.zoomScale,
           tocOpen: activeDoc.outline.open,
           searchOpen: activeDoc.search.open,
+          canGoBack: activeDoc.history.backStack.length > 0,
+          canGoForward: activeDoc.history.forwardStack.length > 0,
         }
       : null,
   );

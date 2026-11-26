@@ -5,7 +5,7 @@ mod common;
 
 use std::path::PathBuf;
 
-use reader_lib::backend::{self, NormalizedRect, OutlineItem};
+use reader_lib::backend::{self, LinkTarget, NormalizedRect, OutlineItem};
 use reader_lib::error::ReaderError;
 use reader_lib::worker::DocumentWorker;
 
@@ -138,6 +138,12 @@ fn pdf_backend_rejects_out_of_range_page_index() {
         matches!(text_err, ReaderError::PageOutOfRange { .. }),
         "expected PageOutOfRange, got {text_err:?}"
     );
+
+    let links_err = doc.page_links(out_of_range).unwrap_err();
+    assert!(
+        matches!(links_err, ReaderError::PageOutOfRange { .. }),
+        "expected PageOutOfRange, got {links_err:?}"
+    );
 }
 
 #[test]
@@ -228,6 +234,46 @@ fn pdf_backend_search_locates_known_word_from_extracted_text() {
         );
         for &rect in &item.rects {
             assert_normalized_rect_valid(rect);
+        }
+    }
+}
+
+#[test]
+fn pdf_backend_extracts_valid_normalized_page_links() {
+    let Some(fixture) = fixture_or_skip() else {
+        return;
+    };
+
+    let doc = backend::open(&fixture).expect("local PDF fixture should open cleanly");
+    let scan_limit = doc.page_count().min(20);
+
+    for page_index in 0..scan_limit {
+        let links = doc
+            .page_links(page_index)
+            .expect("page_links should succeed on valid page");
+        for link in &links {
+            assert!(
+                !link.rects.is_empty(),
+                "page {page_index} link should have at least one hit rect"
+            );
+            for &rect in &link.rects {
+                assert_normalized_rect_valid(rect);
+            }
+            if let LinkTarget::Internal {
+                page_index: target_page,
+                target_point,
+                target_rect,
+            } = &link.target
+            {
+                assert!(*target_page < doc.page_count());
+                if let Some(pt) = target_point {
+                    assert!((0.0..=1.0).contains(&pt.x), "pt.x out of [0, 1]: {pt:?}");
+                    assert!((0.0..=1.0).contains(&pt.y), "pt.y out of [0, 1]: {pt:?}");
+                }
+                if let Some(rect) = target_rect {
+                    assert_normalized_rect_valid(*rect);
+                }
+            }
         }
     }
 }

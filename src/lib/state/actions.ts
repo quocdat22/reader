@@ -1,7 +1,14 @@
 import {
+  formatLinkError,
   formatOpenError,
   type FormattedOpenError,
 } from "../domain/format-error";
+import {
+  pushHistoryEntry,
+  stepBackHistory,
+  stepForwardHistory,
+  type NavLocation,
+} from "../domain/history";
 import {
   buildOutlineModel,
   createInitialExpandedIds,
@@ -15,6 +22,7 @@ import {
 import { getNextZoomStep } from "../domain/zoom";
 import type { ReaderApi, SaveReadingStateParams } from "../ipc/client";
 import { normalizeApiError } from "../ipc/errors";
+import type { PageLink } from "../ipc/types";
 import type { AppStore } from "./app-store.svelte";
 import type { DocumentScopeRegistry } from "./doc-scope";
 import type { PersistenceQueue } from "./persistence";
@@ -80,6 +88,8 @@ export interface AppActions {
   requestZoomMode(mode: "fit_width" | "fit_page"): void;
   requestZoomStep(direction: 1 | -1): void;
   requestJumpToPage(pageIndex: number): void;
+  activatePageLink(documentId: number, link: PageLink): Promise<void>;
+  navigateHistory(direction: -1 | 1): void;
   navigateViewport(action: "page_down" | "page_up" | "home" | "end"): void;
   focusHomeRecentSearch(): void;
   toggleToc(): void;
@@ -698,12 +708,47 @@ export function createAppActions({
     }
   }
 
+  function captureCurrentLocation(doc: DocState): NavLocation {
+    if (store.activeDoc?.documentId === doc.documentId) {
+      const snapshot = hooks.captureViewportSnapshot?.(doc) ?? null;
+      if (snapshot) {
+        applySnapshotToDoc(doc, snapshot);
+        return {
+          pageIndex: snapshot.pageIndex,
+          scrollAnchor: snapshot.scrollAnchor,
+        };
+      }
+    }
+    return {
+      pageIndex: doc.view.pageIndex,
+      scrollAnchor: doc.view.scrollAnchor,
+    };
+  }
+
+  function recordHistoryJump(
+    doc: DocState,
+    targetPageIndex: number,
+    targetYRatio: number | null = null,
+  ): void {
+    const origin = captureCurrentLocation(doc);
+    const next = pushHistoryEntry(
+      doc.history.backStack,
+      doc.history.forwardStack,
+      origin,
+      targetPageIndex,
+      targetYRatio,
+    );
+    doc.history.backStack = next.nextBackStack;
+    doc.history.forwardStack = next.nextForwardStack;
+  }
+
   function requestJumpToPage(pageIndex: number): void {
     const doc = store.activeDoc;
     if (!doc || doc.pageCount <= 0) {
       return;
     }
     const clamped = Math.max(0, Math.min(pageIndex, doc.pageCount - 1));
+    recordHistoryJump(doc, clamped, 0);
     if (hooks.viewportCommands?.scrollToPage) {
       hooks.viewportCommands.scrollToPage(clamped);
     } else {
@@ -714,6 +759,129 @@ export function createAppActions({
           pageIndex: clamped,
           scrollTop: doc.view.scrollTop,
           scrollAnchor: doc.view.scrollAnchor,
+          zoomMode: doc.view.zoomMode,
+          zoomScale: doc.view.zoomScale,
+        },
+        "user",
+      );
+    }
+  }
+
+  async function activatePageLink(
+    documentId: number,
+    link: PageLink,
+  ): Promise<void> {
+    const doc = store.docsById.get(documentId);
+    if (!doc || !scopes.isAlive(documentId)) {
+      return;
+    }
+
+    if (link.target.kind === "internal") {
+      if (store.activeDoc?.documentId !== documentId || doc.pageCount <= 0) {
+        return;
+      }
+      const clampedPage = Math.max(
+        0,
+        Math.min(link.target.page_index, doc.pageCount - 1),
+      );
+      const targetYRatio =
+        link.target.target_point?.y ?? link.target.target_rect?.y ?? 0;
+      recordHistoryJump(doc, clampedPage, targetYRatio);
+
+      if (hooks.viewportCommands?.scrollToTarget) {
+        hooks.viewportCommands.scrollToTarget({
+          pageIndex: clampedPage,
+          point: link.target.target_point,
+          rect: link.target.target_rect,
+        });
+      } else {
+        applyViewportSnapshot(
+          doc.documentId,
+          {
+            documentId: doc.documentId,
+            pageIndex: clampedPage,
+            scrollTop: doc.view.scrollTop,
+            scrollAnchor: {
+              pageIndex: clampedPage,
+              topOffsetRatio: targetYRatio,
+            },
+            zoomMode: doc.view.zoomMode,
+            zoomScale: doc.view.zoomScale,
+          },
+          "user",
+        );
+      }
+      return;
+    }
+
+    const signal = scopes.getSignal(documentId);
+    try {
+      await api.openExternalUrl(link.target.uri);
+    } catch (err) {
+      if (
+        signal?.aborted ||
+        !scopes.isAlive(documentId, signal) ||
+        store.activeDoc?.documentId !== documentId
+      ) {
+        return;
+      }
+      store.banner = {
+        scope: "workspace",
+        message: formatLinkError(err),
+      };
+    }
+  }
+
+  function navigateHistory(direction: -1 | 1): void {
+    const doc = store.activeDoc;
+    if (!doc || doc.pageCount <= 0) {
+      return;
+    }
+    const current = captureCurrentLocation(doc);
+    const stepped =
+      direction < 0
+        ? stepBackHistory(
+            doc.history.backStack,
+            doc.history.forwardStack,
+            current,
+          )
+        : stepForwardHistory(
+            doc.history.backStack,
+            doc.history.forwardStack,
+            current,
+          );
+
+    if (!stepped.destination) {
+      return;
+    }
+
+    doc.history.backStack = stepped.nextBackStack;
+    doc.history.forwardStack = stepped.nextForwardStack;
+
+    const clampedPage = Math.max(
+      0,
+      Math.min(stepped.destination.pageIndex, doc.pageCount - 1),
+    );
+    const destinationAnchor = stepped.destination.scrollAnchor
+      ? {
+          pageIndex: clampedPage,
+          topOffsetRatio: stepped.destination.scrollAnchor.topOffsetRatio,
+        }
+      : null;
+
+    if (hooks.viewportCommands?.scrollToAnchor) {
+      hooks.viewportCommands.scrollToAnchor({
+        pageIndex: clampedPage,
+        scrollAnchor: destinationAnchor,
+      });
+    } else {
+      applyViewportSnapshot(
+        doc.documentId,
+        {
+          documentId: doc.documentId,
+          pageIndex: clampedPage,
+          scrollTop: doc.view.scrollTop,
+          scrollAnchor: destinationAnchor,
           zoomMode: doc.view.zoomMode,
           zoomScale: doc.view.zoomScale,
         },
@@ -1209,6 +1377,8 @@ export function createAppActions({
     requestZoomMode,
     requestZoomStep,
     requestJumpToPage,
+    activatePageLink,
+    navigateHistory,
     navigateViewport,
     focusHomeRecentSearch,
     toggleToc,

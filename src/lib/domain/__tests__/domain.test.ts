@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { OutlineItem, RecentFile, SearchMatch } from "../../ipc/types";
-import { formatOpenError } from "../format-error";
+import { formatLinkError, formatOpenError } from "../format-error";
+import {
+  MAX_NAV_HISTORY,
+  pushHistoryEntry,
+  stepBackHistory,
+  stepForwardHistory,
+  type NavLocation,
+} from "../history";
 import {
   buildOutlineModel,
   createInitialExpandedIds,
@@ -253,5 +260,78 @@ describe("formatOpenError", () => {
       message: "Could not open this document.",
       canRemoveRecent: false,
     });
+  });
+});
+
+describe("formatLinkError", () => {
+  it("formats unsupported URI and external launch failures cleanly", () => {
+    expect(formatLinkError({ code: "unsupported_uri" })).toBe(
+      "Cannot open this link. Only http, https, and mailto links are supported.",
+    );
+    expect(formatLinkError({ code: "io", message: "Launcher failed" })).toBe(
+      "Launcher failed",
+    );
+    expect(formatLinkError(null)).toBe("Could not open external link.");
+  });
+});
+
+describe("navigation history helpers", () => {
+  const loc = (pageIndex: number, topOffsetRatio = 0): NavLocation => ({
+    pageIndex,
+    scrollAnchor: { pageIndex, topOffsetRatio },
+  });
+
+  it("pushes distinct jumps, clears forward stack, and ignores same-spot jumps", () => {
+    const initial = pushHistoryEntry([], [loc(9)], loc(1, 0.25), 5, 0);
+    expect(initial.nextBackStack).toEqual([loc(1, 0.25)]);
+    expect(initial.nextForwardStack).toEqual([]);
+
+    // Same page and within 0.02 ratio epsilon is treated as no-op.
+    const sameSpot = pushHistoryEntry(
+      initial.nextBackStack,
+      [loc(7)],
+      loc(5, 0.4),
+      5,
+      0.41,
+    );
+    expect(sameSpot.nextBackStack).toEqual([loc(1, 0.25)]);
+    expect(sameSpot.nextForwardStack).toEqual([loc(7)]);
+
+    // Distinct vertical offset on the same page records history.
+    const samePageFootnote = pushHistoryEntry(
+      initial.nextBackStack,
+      [],
+      loc(5, 0.05),
+      5,
+      0.85,
+    );
+    expect(samePageFootnote.nextBackStack).toEqual([
+      loc(1, 0.25),
+      loc(5, 0.05),
+    ]);
+  });
+
+  it("caps history length at MAX_NAV_HISTORY and steps back/forward accurately", () => {
+    let back: NavLocation[] = [];
+    let forward: NavLocation[] = [];
+    for (let i = 0; i < MAX_NAV_HISTORY + 10; i += 1) {
+      const res = pushHistoryEntry(back, forward, loc(i), i + 1, 0);
+      back = res.nextBackStack;
+      forward = res.nextForwardStack;
+    }
+    expect(back).toHaveLength(MAX_NAV_HISTORY);
+    expect(back[0]?.pageIndex).toBe(10);
+
+    const backed = stepBackHistory(back, forward, loc(60, 0.5));
+    expect(backed.destination).toEqual(loc(59));
+    expect(backed.nextForwardStack).toEqual([loc(60, 0.5)]);
+
+    const forwarded = stepForwardHistory(
+      backed.nextBackStack,
+      backed.nextForwardStack,
+      loc(59),
+    );
+    expect(forwarded.destination).toEqual(loc(60, 0.5));
+    expect(forwarded.nextForwardStack).toEqual([]);
   });
 });

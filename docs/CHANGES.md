@@ -16,6 +16,7 @@
 | `CR-006` | Home Recent files search in `.recent-header` | Implemented | [SPEC §5 Layout](SPEC.md#core-layout-wireframe), [SPEC §5 Shortcuts](SPEC.md#keyboard-shortcuts), [PHASES Phase 3](PHASES.md#phase-3-minimalist-ui-shell-multi-tab-strip--virtualized-viewport) | [006-home-recent-search.md](changes/006-home-recent-search.md) |
 | `CR-007` | Migrate frontend to Vite + TypeScript + Svelte 5 (Runes state architecture) | Implemented | [SPEC §1 Non-Goals](SPEC.md#v1-non-goals-out-of-scope), [SPEC §2 Architecture](SPEC.md#2-system-architecture), [SPEC §4 IPC](SPEC.md#4-ipc-contract), [SPEC §5 Modules](SPEC.md#frontend-module-structure-src), [PHASES Phase 3–6](PHASES.md#phase-3-minimalist-ui-shell-multi-tab-strip--virtualized-viewport) | [frontend-svelte5/README.md](frontend-svelte5/README.md) |
 | `CR-008` | Recent files first-page cover previews & disk cache | Implemented | [SPEC §4 IPC](SPEC.md#4-ipc-contract), [SPEC §5 Layout](SPEC.md#core-layout-wireframe), [PHASES Phase 3](PHASES.md#phase-3-minimalist-ui-shell-multi-tab-strip--virtualized-viewport) | [008-recent-cover-previews.md](changes/008-recent-cover-previews.md) |
+| `CR-009` | Clickable PDF links & per-tab navigation history | Implemented | [SPEC §1 Non-Goals](SPEC.md#v1-non-goals-out-of-scope), [SPEC §3 Backend](SPEC.md#lightweight-documentbackend-trait-boundary), [SPEC §4 IPC](SPEC.md#4-ipc-contract), [SPEC §5 Chrome/Shortcuts](SPEC.md#aesthetic-direction), [PHASES Phase 1, 2, 4, 5](PHASES.md) | [009-clickable-pdf-links.md](changes/009-clickable-pdf-links.md) |
 
 ---
 

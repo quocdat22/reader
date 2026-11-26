@@ -47,6 +47,8 @@ Execute phases sequentially. Complete every item in a phase's **Exit Gate** befo
 
 > [!NOTE]
 > **Amended by [CR-005](changes/005-pdfium-render-engine.md#5-coordinate-projection-rendering-outline-text--search)**: `PdfBackend` in `src-tauri/src/backend/pdf.rs` is now implemented on `pdfium-render` with bottom-left + `CropBox` + `/Rotate` projection tests and Unicode stream-reader loading.
+>
+> **Amended by [CR-009](changes/009-clickable-pdf-links.md#3-pdf-link-extraction--security)**: Adds `DocumentBackend::page_links` (`PdfBackend` `/Link` + `/QuadPoints` extraction) and `WorkerRequest::PageLinks`.
 
 ---
 
@@ -72,6 +74,8 @@ Execute phases sequentially. Complete every item in a phase's **Exit Gate** befo
 
 > [!NOTE]
 > **Amended by [CR-004](changes/004-paginated-unbounded-recents.md#3-persistence-behavior)**: `PersistedState` no longer caps `recent_files` at 10 entries; unit tests verify unbounded retention beyond 10 entries.
+>
+> **Amended by [CR-009](changes/009-clickable-pdf-links.md#4-ipc-commands--wire-dtos)**: Adds `get_page_links` and `open_external_url` IPC commands plus `external.rs` URL scheme validation.
 
 ---
 
@@ -135,6 +139,8 @@ Execute phases sequentially. Complete every item in a phase's **Exit Gate** befo
 
 > [!NOTE]
 > **Amended by [CR-007](frontend-svelte5/phases/phase-4-toc-search-and-shortcuts.md)**: TOC outline drawer (`src/components/TocDrawer.svelte`, `src/components/TocTree.svelte`), chapter state, and global keyboard shortcut routing (`src/lib/engines/shortcuts.ts`) were migrated to Svelte 5 and TypeScript.
+>
+> **Amended by [CR-009](changes/009-clickable-pdf-links.md#5-frontend-link-layer--navigation-history)**: Adds per-tab Back/Forward navigation history (`Toolbar` buttons, `Alt+ArrowLeft`/`Alt+ArrowRight`, and mouse buttons `3`/`4`).
 
 ---
 
@@ -159,6 +165,8 @@ Execute phases sequentially. Complete every item in a phase's **Exit Gate** befo
 
 > [!NOTE]
 > **Amended by [CR-007](frontend-svelte5/phases/phase-4-toc-search-and-shortcuts.md)**: Text layer (`src/lib/engines/text-layer.ts`), search bar (`src/components/SearchBar.svelte`), and highlight geometry helpers were migrated to Svelte 5 and TypeScript.
+>
+> **Amended by [CR-009](changes/009-clickable-pdf-links.md#5-frontend-link-layer--navigation-history)**: Adds `src/lib/engines/link-layer.ts` alongside `text-layer.ts` for clickable PDF links without obstructing text drag-selection.
 
 ---
 

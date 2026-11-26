@@ -1,7 +1,14 @@
 import type { SvelteSet } from "svelte/reactivity";
+import type { NavLocation } from "../domain/history";
 import type { OutlineModel } from "../domain/outline";
 import type { PageSearchEntry } from "../domain/search";
-import type { PageDimensions, SearchMatch, ZoomMode } from "../ipc/types";
+import type {
+  NormalizedPoint,
+  NormalizedRect,
+  PageDimensions,
+  SearchMatch,
+  ZoomMode,
+} from "../ipc/types";
 
 export const HOME_TAB_ID = "home" as const;
 
@@ -65,6 +72,11 @@ export interface DocSearchState {
   scrollToMatchSeq: number;
 }
 
+export interface DocHistoryState {
+  backStack: NavLocation[];
+  forwardStack: NavLocation[];
+}
+
 export interface DocState {
   readonly documentId: number;
   readonly canonicalPath: string;
@@ -74,6 +86,7 @@ export interface DocState {
   view: DocViewState;
   outline: DocOutlineState;
   search: DocSearchState;
+  history: DocHistoryState;
 }
 
 export interface BannerState {
@@ -92,6 +105,8 @@ export interface ToolbarModel {
   readonly zoomScale: number;
   readonly tocOpen: boolean;
   readonly searchOpen: boolean;
+  readonly canGoBack: boolean;
+  readonly canGoForward: boolean;
 }
 
 export type FocusTarget =
@@ -111,10 +126,23 @@ export interface ViewportSnapshot {
   readonly zoomScale: number;
 }
 
+export interface ViewportLinkTarget {
+  readonly pageIndex: number;
+  readonly point?: NormalizedPoint | null;
+  readonly rect?: NormalizedRect | null;
+}
+
+export interface ViewportAnchorTarget {
+  readonly pageIndex: number;
+  readonly scrollAnchor: ScrollAnchor | null;
+}
+
 export interface ViewportCommandBridge {
   setZoomMode?(mode: "fit_width" | "fit_page"): void;
   setCustomZoom?(scale: number): void;
   scrollToPage?(pageIndex: number): void;
+  scrollToTarget?(target: ViewportLinkTarget): void;
+  scrollToAnchor?(target: ViewportAnchorTarget): void;
   scrollPageStep?(direction: 1 | -1): void;
   scrollToStart?(): void;
   scrollToEnd?(): void;

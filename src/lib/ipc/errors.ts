@@ -8,6 +8,7 @@ const KNOWN_ERROR_CODES: ReadonlySet<ErrorCode> = new Set<ErrorCode>([
   "page_out_of_range",
   "document_not_found",
   "cancelled",
+  "unsupported_uri",
   "internal",
 ]);
 

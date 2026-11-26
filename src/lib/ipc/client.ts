@@ -7,6 +7,7 @@ import { normalizeApiError } from "./errors";
 import type {
   OpenDocumentResponse,
   OutlineItem,
+  PageLink,
   PersistedState,
   SearchMatch,
   TextSpan,
@@ -53,10 +54,12 @@ export interface ReaderApi {
   renderPage(params: RenderPageParams): Promise<ImageData>;
   getOutline(documentId: number): Promise<OutlineItem[]>;
   getPageText(documentId: number, pageIndex: number): Promise<TextSpan[]>;
+  getPageLinks(documentId: number, pageIndex: number): Promise<PageLink[]>;
   searchDocument(documentId: number, query: string): Promise<SearchMatch[]>;
   saveReadingState(params: SaveReadingStateParams): Promise<void>;
   removeRecentFile(path: string): Promise<PersistedState>;
   getRecentCover(path: string, maxSidePx?: number): Promise<ImageData>;
+  openExternalUrl(url: string): Promise<void>;
   pickPdfFiles(): Promise<string[]>;
   subscribeDragDrop(handlers: DragDropHandlers): Promise<() => void>;
   getWindowControls(): WindowControlsApi;
@@ -129,6 +132,12 @@ export function createTauriReaderApi(): ReaderApi {
         page_index: pageIndex,
       }),
 
+    getPageLinks: (documentId: number, pageIndex: number) =>
+      invokeCommand<PageLink[]>("get_page_links", {
+        document_id: documentId,
+        page_index: pageIndex,
+      }),
+
     searchDocument: (documentId: number, query: string) =>
       invokeCommand<SearchMatch[]>("search_document", {
         document_id: documentId,
@@ -158,6 +167,9 @@ export function createTauriReaderApi(): ReaderApi {
       });
       return decodeRenderFrame(buffer);
     },
+
+    openExternalUrl: (url: string) =>
+      invokeCommand<void>("open_external_url", { url }),
 
     pickPdfFiles: async () => {
       try {

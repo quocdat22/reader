@@ -83,3 +83,52 @@
   background-color: var(--selection-bg);
   color: transparent;
 }
+
+.link-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+}
+
+.pdf-link-group {
+  pointer-events: none;
+}
+
+.pdf-link-rect {
+  position: absolute;
+  border-radius: 2px;
+  background-color: transparent;
+  border-bottom: 1px solid transparent;
+  pointer-events: none;
+  transition:
+    background-color 90ms ease,
+    border-color 90ms ease;
+}
+
+.pdf-link-hit {
+  appearance: none;
+  margin: 0;
+  padding: 0;
+  border-top: none;
+  border-left: none;
+  border-right: none;
+}
+
+.pdf-link-hit:focus-visible {
+  outline: 2px solid var(--accent-cobalt);
+  outline-offset: 1px;
+}
+
+.pdf-link-group--hover .pdf-link-rect,
+.pdf-link-group:focus-within .pdf-link-rect {
+  background-color: rgba(30, 77, 183, 0.08);
+  border-bottom-color: rgba(30, 77, 183, 0.38);
+}
+
+.viewport--link-hover,
+.viewport--link-hover .text-span {
+  cursor: pointer;
+}

@@ -440,4 +440,82 @@ describe("createViewportEngine scroll & page jump behavior", () => {
 
     engine.destroy();
   });
+
+  it("supports CR-009 scrollToTarget, scrollToAnchor, and linkLayer lifecycle forwarding", async () => {
+    const harness = createViewportHarness(600, 720);
+    const snapshots: ViewportSnapshot[] = [];
+    const syncVisibleRange = vi.fn();
+    const evictOutside = vi.fn();
+    const clearMounted = vi.fn();
+    const renderPage = vi.fn(
+      async ({ widthPx, heightPx }: { widthPx: number; heightPx: number }) =>
+        ({
+          width: widthPx,
+          height: heightPx,
+          data: new Uint8ClampedArray(widthPx * heightPx * 4),
+        }) as unknown as ImageData,
+    );
+
+    const engine = createViewportEngine({
+      viewportEl: harness.viewportEl,
+      trackEl: harness.trackEl,
+      api: { renderPage },
+      linkLayer: {
+        syncVisibleRange,
+        evictOutside,
+        clearMounted,
+      },
+      onViewStateChange: (snapshot) => {
+        snapshots.push(snapshot);
+      },
+    });
+
+    engine.mountDocument({
+      documentId: 1,
+      pageDimensions: Array.from({ length: 12 }, () => LETTER_PAGE),
+      pageIndex: 0,
+      scrollTop: null,
+      scrollAnchor: null,
+      zoomMode: "custom",
+      zoomScale: 2.0,
+    });
+    harness.flushRaf();
+
+    expect(syncVisibleRange).toHaveBeenCalled();
+
+    engine.scrollToTarget({
+      pageIndex: 8,
+      point: { x: 0.75, y: 0.4 },
+    });
+    harness.flushRaf();
+
+    const jumpedScrollTop = harness.viewportEl.scrollTop;
+    expect(jumpedScrollTop).toBeGreaterThan(5000);
+    expect(harness.viewportEl.scrollLeft).toBeGreaterThan(0);
+    expect(snapshots.at(-1)?.pageIndex).toBe(8);
+    expect(evictOutside).toHaveBeenCalled();
+
+    const anchor = snapshots.at(-1)?.scrollAnchor ?? null;
+    expect(anchor).not.toBeNull();
+
+    engine.scrollToTarget({
+      pageIndex: 2,
+      rect: { x: 0.1, y: 0.5, width: 0.5, height: 0.1 },
+    });
+    harness.flushRaf();
+    expect(snapshots.at(-1)?.pageIndex).toBe(2);
+
+    engine.scrollToAnchor({ pageIndex: 8, scrollAnchor: anchor });
+    harness.flushRaf();
+    expect(
+      Math.abs(harness.viewportEl.scrollTop - jumpedScrollTop),
+    ).toBeLessThan(4);
+
+    await Promise.resolve();
+    const clearCallsBeforeUnmount = clearMounted.mock.calls.length;
+    engine.unmount();
+    expect(clearMounted).toHaveBeenCalledTimes(clearCallsBeforeUnmount + 1);
+
+    engine.destroy();
+  });
 });

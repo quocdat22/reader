@@ -7,9 +7,12 @@ use serde::Serialize;
 use tauri::State;
 use tauri::ipc::Response;
 
-use crate::backend::{DocumentMetadata, OutlineItem, PageDimensions, SearchMatch, TextSpan};
+use crate::backend::{
+    DocumentMetadata, OutlineItem, PageDimensions, PageLink, SearchMatch, TextSpan,
+};
 use crate::covers::{clamp_cover_max_side, read_cached_cover, write_cached_cover};
 use crate::error::ReaderError;
+use crate::external::open_external_url_blocking;
 use crate::state::{AppState, PersistedState, ReadingPosition, ZoomMode};
 use crate::worker::canonicalize_document_path;
 
@@ -261,6 +264,31 @@ pub async fn get_recent_cover(
     }
 
     Ok(Response::new(ipc_bytes))
+}
+
+/// Extracts clickable link annotations (in normalized `[0.0, 1.0]` coordinates) for one page.
+///
+/// # Errors
+/// Returns [`ReaderError::DocumentNotFound`], [`ReaderError::PageOutOfRange`], or backend errors.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn get_page_links(
+    state: State<'_, AppState>,
+    document_id: u64,
+    page_index: usize,
+) -> Result<Vec<PageLink>, ReaderError> {
+    state.worker().get_page_links(document_id, page_index).await
+}
+
+/// Validates and opens an external URI (`http`, `https`, or `mailto`) in the default OS handler.
+///
+/// # Errors
+/// - Returns [`ReaderError::UnsupportedUri`] if the URL is invalid or uses a disallowed scheme.
+/// - Returns [`ReaderError::Io`] or [`ReaderError::Internal`] if launching the OS handler fails.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn open_external_url(url: String) -> Result<(), ReaderError> {
+    tauri::async_runtime::spawn_blocking(move || open_external_url_blocking(&url))
+        .await
+        .map_err(|err| ReaderError::Internal(format!("external URL task failed: {err}")))?
 }
 
 fn validate_non_empty_path(path: &str) -> Result<(), ReaderError> {

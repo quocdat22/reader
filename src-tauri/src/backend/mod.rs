@@ -139,6 +139,44 @@ pub struct SearchMatch {
     pub rects: Vec<NormalizedRect>,
 }
 
+/// Page-relative point in top-left normalized `[0.0, 1.0]` coordinates.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct NormalizedPoint {
+    /// Horizontal offset as a fraction of page width (`0.0..=1.0`).
+    pub x: f32,
+    /// Vertical offset as a fraction of page height (`0.0..=1.0`).
+    pub y: f32,
+}
+
+/// Action target triggered when activating a clickable link on a page.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum LinkTarget {
+    /// Internal jump to a page (and optional coordinates/region) within the same document.
+    Internal {
+        /// Zero-based destination page index.
+        page_index: usize,
+        /// Optional target focal point on `page_index` in top-left `[0.0, 1.0]` coordinates.
+        target_point: Option<NormalizedPoint>,
+        /// Optional target destination rectangle on `page_index` in top-left `[0.0, 1.0]` coordinates.
+        target_rect: Option<NormalizedRect>,
+    },
+    /// External URI link (`http`, `https`, or `mailto`).
+    External {
+        /// Validated external URI string.
+        uri: String,
+    },
+}
+
+/// Single clickable link annotation on a page with one or more hit rectangles.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PageLink {
+    /// Hit-test rectangles in top-left normalized `[0.0, 1.0]` page coordinates.
+    pub rects: Vec<NormalizedRect>,
+    /// Target destination or external URI.
+    pub target: LinkTarget,
+}
+
 /// Fixed-page document engine abstraction.
 ///
 /// Implementations are not required to be `Send` or `Sync`; all runtime calls
@@ -183,6 +221,13 @@ pub trait DocumentBackend {
     /// # Errors
     /// Returns an error if any page cannot be loaded for searching.
     fn search(&self, query: &str) -> Result<Vec<SearchMatch>, ReaderError>;
+
+    /// Extracts clickable link regions and resolved targets for a single page.
+    ///
+    /// # Errors
+    /// - Returns [`ReaderError::PageOutOfRange`] if `page_index >= self.page_count()`.
+    /// - Returns [`ReaderError::Internal`] if link extraction fails.
+    fn page_links(&self, page_index: usize) -> Result<Vec<PageLink>, ReaderError>;
 }
 
 /// Clamps requested render dimensions into `1..=MAX_RENDER_SIDE_PX` while

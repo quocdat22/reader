@@ -133,6 +133,22 @@ export function installShortcutRouter({
       return;
     }
 
+    // Alt+ArrowLeft / Alt+ArrowRight navigate per-tab link/jump history (and suppress WebView back/forward).
+    if (
+      event.altKey &&
+      !primaryMod &&
+      !event.shiftKey &&
+      (event.key === "ArrowLeft" || event.key === "ArrowRight")
+    ) {
+      if (!inEditable) {
+        event.preventDefault();
+        if (store.activeDoc) {
+          actions.navigateHistory(event.key === "ArrowLeft" ? -1 : 1);
+        }
+      }
+      return;
+    }
+
     // Ctrl+Tab / Ctrl+Shift+Tab switch tabs across platforms (uses physical Ctrl key).
     if (
       event.ctrlKey &&
@@ -319,12 +335,33 @@ export function installShortcutRouter({
     }
   }
 
+  function handleMouseNavBlock(event: MouseEvent): void {
+    if (event.button === 3 || event.button === 4) {
+      event.preventDefault();
+    }
+  }
+
+  function handleMouseNavUp(event: MouseEvent): void {
+    if (event.button === 3 || event.button === 4) {
+      event.preventDefault();
+      if (store.activeDoc) {
+        actions.navigateHistory(event.button === 3 ? -1 : 1);
+      }
+    }
+  }
+
   window.addEventListener("keydown", handleKeyDown);
   window.addEventListener("wheel", handleWheel, { passive: false });
+  window.addEventListener("mousedown", handleMouseNavBlock);
+  window.addEventListener("mouseup", handleMouseNavUp);
+  window.addEventListener("auxclick", handleMouseNavBlock);
 
   return () => {
     resetWheelAccumulator();
     window.removeEventListener("keydown", handleKeyDown);
     window.removeEventListener("wheel", handleWheel);
+    window.removeEventListener("mousedown", handleMouseNavBlock);
+    window.removeEventListener("mouseup", handleMouseNavUp);
+    window.removeEventListener("auxclick", handleMouseNavBlock);
   };
 }

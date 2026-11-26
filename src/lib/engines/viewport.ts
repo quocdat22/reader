@@ -8,7 +8,12 @@ import type {
   SearchMatch,
   ZoomMode,
 } from "../ipc/types";
-import type { ScrollAnchor, ViewportSnapshot } from "../state/types";
+import type {
+  ScrollAnchor,
+  ViewportAnchorTarget,
+  ViewportLinkTarget,
+  ViewportSnapshot,
+} from "../state/types";
 import {
   EVICT_RADIUS,
   MAX_CONCURRENT_RENDERS,
@@ -71,11 +76,27 @@ export interface TextLayerViewportBridge {
   clearMounted(): void;
 }
 
+export interface LinkLayerViewportBridge {
+  syncVisibleRange(params: {
+    documentId: number;
+    signal?: AbortSignal | null;
+    firstVisible: number;
+    lastVisible: number;
+    renderMin: number;
+    renderMax: number;
+    slotElements: readonly HTMLDivElement[];
+    pageOffsets: readonly PageLayoutGeom[];
+  }): void;
+  evictOutside(keepMin: number, keepMax: number): void;
+  clearMounted(): void;
+}
+
 export interface ViewportEngineOptions {
   readonly viewportEl: HTMLElement;
   readonly trackEl: HTMLElement;
   readonly api: Pick<ReaderApi, "renderPage">;
   readonly textLayer?: TextLayerViewportBridge;
+  readonly linkLayer?: LinkLayerViewportBridge;
   readonly onViewStateChange: (
     snapshot: ViewportSnapshot,
     reason: "mount" | "user",
@@ -86,6 +107,8 @@ export interface ViewportEngine {
   mountDocument(input: ViewportMountInput): void;
   unmount(): void;
   scrollToPage(pageIndex: number): void;
+  scrollToTarget(target: ViewportLinkTarget): void;
+  scrollToAnchor(target: ViewportAnchorTarget): void;
   scrollToNormalizedRect(pageIndex: number, rect?: NormalizedRect | null): void;
   syncSearchHighlights(search: ViewportSearchInput | null): void;
   scrollPageStep(direction: 1 | -1): void;
@@ -133,6 +156,7 @@ export function createViewportEngine({
   trackEl,
   api,
   textLayer,
+  linkLayer,
   onViewStateChange,
 }: ViewportEngineOptions): ViewportEngine {
   let activeDoc: MountedDocState | null = null;
@@ -330,6 +354,7 @@ export function createViewportEngine({
     }
 
     textLayer?.evictOutside(keepMin, keepMax, slotElements);
+    linkLayer?.evictOutside(keepMin, keepMax);
   }
 
   function drainRenderQueue(): void {
@@ -451,6 +476,16 @@ export function createViewportEngine({
     textLayer?.syncVisibleRange({
       documentId: activeDoc.documentId,
       pageDimensions: activeDoc.pageDimensions,
+      signal: activeDoc.signal,
+      firstVisible,
+      lastVisible,
+      renderMin,
+      renderMax,
+      slotElements,
+      pageOffsets,
+    });
+    linkLayer?.syncVisibleRange({
+      documentId: activeDoc.documentId,
       signal: activeDoc.signal,
       firstVisible,
       lastVisible,
@@ -644,6 +679,7 @@ export function createViewportEngine({
     bumpEpoch();
     textLayer?.clearActiveSelection();
     textLayer?.clearMounted();
+    linkLayer?.clearMounted();
     clearAllSearchLayers();
     releaseAllCanvases();
     slotElements = [];
@@ -754,6 +790,41 @@ export function createViewportEngine({
     scheduleVisibleRenders();
   }
 
+  function commitProgrammaticJump(
+    pageIndex: number,
+    targetScrollTop: number,
+    targetScrollLeft?: number,
+  ): void {
+    if (!activeDoc || pageOffsets.length === 0) {
+      return;
+    }
+    pendingInitialPositionRestore = false;
+    viewportEl.scrollTop = snapToDevicePixels(
+      Math.max(0, targetScrollTop),
+      currentDpr,
+    );
+    if (targetScrollLeft !== undefined) {
+      viewportEl.scrollLeft = snapToDevicePixels(
+        Math.max(0, targetScrollLeft),
+        currentDpr,
+      );
+    }
+    const landedScrollTop = viewportEl.scrollTop;
+    pinnedJump = { pageIndex, scrollTop: landedScrollTop };
+    activeDoc.pageIndex = pageIndex;
+    activeDoc.scrollTop = landedScrollTop;
+    activeDoc.scrollAnchor = computeTabScrollAnchor(
+      pageOffsets,
+      landedScrollTop,
+      pageIndex,
+    );
+    const snapshot = buildSnapshot();
+    if (snapshot) {
+      onViewStateChange(snapshot, "user");
+    }
+    scheduleVisibleRenders();
+  }
+
   function scrollToPage(pageIndex: number): void {
     if (!activeDoc || pageOffsets.length === 0) {
       return;
@@ -763,25 +834,75 @@ export function createViewportEngine({
     if (!geom) {
       return;
     }
-    pendingInitialPositionRestore = false;
-    viewportEl.scrollTop = snapToDevicePixels(
-      Math.max(0, geom.top - TRACK_PADDING_Y),
-      currentDpr,
-    );
-    const landedScrollTop = viewportEl.scrollTop;
-    pinnedJump = { pageIndex: clamped, scrollTop: landedScrollTop };
-    activeDoc.pageIndex = clamped;
-    activeDoc.scrollTop = landedScrollTop;
-    activeDoc.scrollAnchor = computeTabScrollAnchor(
-      pageOffsets,
-      landedScrollTop,
-      clamped,
-    );
-    const snapshot = buildSnapshot();
-    if (snapshot) {
-      onViewStateChange(snapshot, "user");
+    commitProgrammaticJump(clamped, Math.max(0, geom.top - TRACK_PADDING_Y));
+  }
+
+  function scrollToTarget(target: ViewportLinkTarget): void {
+    if (!activeDoc || pageOffsets.length === 0) {
+      return;
     }
-    scheduleVisibleRenders();
+    const clamped = Math.max(
+      0,
+      Math.min(target.pageIndex, pageOffsets.length - 1),
+    );
+    const geom = pageOffsets[clamped];
+    if (!geom) {
+      return;
+    }
+    let targetScrollTop = Math.max(0, geom.top - TRACK_PADDING_Y);
+    let targetScrollLeft: number | undefined;
+    if (target.point) {
+      targetScrollTop = Math.max(
+        0,
+        geom.top + target.point.y * geom.height - 24,
+      );
+      if (viewportEl.scrollWidth > viewportEl.clientWidth) {
+        const pageLeft = Math.max(0, (viewportEl.scrollWidth - geom.width) / 2);
+        targetScrollLeft = Math.max(
+          0,
+          pageLeft + target.point.x * geom.width - 24,
+        );
+      }
+    } else if (target.rect) {
+      const rectTop = geom.top + target.rect.y * geom.height;
+      const rectHeight = Math.max(0, target.rect.height) * geom.height;
+      targetScrollTop = Math.max(
+        0,
+        rectTop - Math.max(24, (viewportEl.clientHeight - rectHeight) / 2),
+      );
+      if (viewportEl.scrollWidth > viewportEl.clientWidth) {
+        const pageLeft = Math.max(0, (viewportEl.scrollWidth - geom.width) / 2);
+        const rectLeft = pageLeft + target.rect.x * geom.width;
+        const rectWidth = Math.max(0, target.rect.width) * geom.width;
+        targetScrollLeft = Math.max(
+          0,
+          rectLeft - Math.max(24, (viewportEl.clientWidth - rectWidth) / 2),
+        );
+      }
+    }
+    commitProgrammaticJump(clamped, targetScrollTop, targetScrollLeft);
+  }
+
+  function scrollToAnchor(target: ViewportAnchorTarget): void {
+    if (!activeDoc || pageOffsets.length === 0) {
+      return;
+    }
+    const clamped = Math.max(
+      0,
+      Math.min(target.pageIndex, pageOffsets.length - 1),
+    );
+    const geom = pageOffsets[clamped];
+    if (!geom) {
+      return;
+    }
+    const ratio = target.scrollAnchor
+      ? Math.max(0, Math.min(1, target.scrollAnchor.topOffsetRatio))
+      : 0;
+    const targetScrollTop =
+      ratio > 0
+        ? geom.top + ratio * geom.height
+        : Math.max(0, geom.top - TRACK_PADDING_Y);
+    commitProgrammaticJump(clamped, targetScrollTop);
   }
 
   function scrollPageStep(direction: 1 | -1): void {
@@ -1098,6 +1219,8 @@ export function createViewportEngine({
     mountDocument,
     unmount,
     scrollToPage,
+    scrollToTarget,
+    scrollToAnchor,
     scrollToNormalizedRect,
     syncSearchHighlights,
     scrollPageStep,

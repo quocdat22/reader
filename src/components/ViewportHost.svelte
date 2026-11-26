@@ -1,5 +1,6 @@
 <script lang="ts">
   import { untrack, type Snippet } from "svelte";
+  import { createLinkLayerEngine } from "../lib/engines/link-layer";
   import { createTextLayerEngine } from "../lib/engines/text-layer";
   import {
     createViewportEngine,
@@ -49,11 +50,19 @@
     }
 
     const textLayer = createTextLayerEngine({ viewportEl, api });
+    const linkLayer = createLinkLayerEngine({
+      viewportEl,
+      api,
+      onActivateLink: (documentId, link) => {
+        void actions.activatePageLink(documentId, link);
+      },
+    });
     const viewport = createViewportEngine({
       viewportEl,
       trackEl,
       api,
       textLayer,
+      linkLayer,
       onViewStateChange: (snapshot, reason) => {
         actions.applyViewportSnapshot(snapshot.documentId, snapshot, reason);
       },
@@ -63,11 +72,14 @@
     hooks.captureViewportSnapshot = () => viewport.captureSnapshot();
     hooks.onDocumentClosed = (documentId: number) => {
       textLayer.evictDocument(documentId);
+      linkLayer.evictDocument(documentId);
     };
     hooks.viewportCommands = {
       setZoomMode: (mode) => viewport.setZoomMode(mode),
       setCustomZoom: (scale) => viewport.setCustomZoom(scale),
       scrollToPage: (pageIndex) => viewport.scrollToPage(pageIndex),
+      scrollToTarget: (target) => viewport.scrollToTarget(target),
+      scrollToAnchor: (target) => viewport.scrollToAnchor(target),
       scrollPageStep: (direction) => viewport.scrollPageStep(direction),
       scrollToStart: () => viewport.scrollToStart(),
       scrollToEnd: () => viewport.scrollToEnd(),
@@ -81,6 +93,7 @@
       delete hooks.onDocumentClosed;
       viewportEngine = null;
       viewport.destroy();
+      linkLayer.destroy();
       textLayer.destroy();
     };
   });

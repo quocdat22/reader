@@ -32,6 +32,8 @@ Concise architectural, interface, and visual specification for `reader` (`com.ro
 
 > [!NOTE]
 > **Amended by [CR-007](frontend-svelte5/README.md)**: While the runtime remains dependency-minimal with zero CSS frameworks, the frontend architecture moved from vanilla HTML/JS to **Vite + TypeScript + Svelte 5 (Runes)** managed with **pnpm** and compiled into static ES modules under `dist/` (`withGlobalTauri: false`). See [CR-007 Architecture](frontend-svelte5/ARCHITECTURE.md).
+>
+> **Amended by [CR-009](changes/009-clickable-pdf-links.md#3-pdf-link-extraction--security)**: Standard clickable PDF `/Link` annotations (internal destinations and allowlisted `http`/`https`/`mailto` external URIs) and per-tab navigation history are now implemented post-v1.
 
 ---
 
@@ -104,6 +106,9 @@ pub trait DocumentBackend {
 - `PdfBackend` is the sole v1 implementation.
 - Opening a file dispatches by extension/magic header through a small factory function (`backend::open(path) -> Result<Box<dyn DocumentBackend>, ReaderError>`).
 
+> [!NOTE]
+> **Amended by [CR-009](changes/009-clickable-pdf-links.md#3-pdf-link-extraction--security)**: `DocumentBackend` adds `page_links(&self, page_index: usize) -> Result<Vec<PageLink>, ReaderError>` for normalized `/Link` annotation extraction.
+
 ### Concurrency & Render Cancellation (`worker.rs`)
 - All document operations execute on a single dedicated worker OS thread (`std::thread::Builder::new().name("doc-worker".into())`) that owns the thread-local MuPDF context and every open `Document` handle cleanly without cross-thread FFI lock contention.
 - The worker owns a `HashMap<u64, OpenDocument>` mapping monotonic `document_id: u64` to its `Box<dyn DocumentBackend>` and canonical path, so multiple open tabs coexist safely on the single worker thread.
@@ -162,6 +167,8 @@ All commands are invoked via `window.__TAURI__.core.invoke`.
 
 > [!NOTE]
 > **Amended by [CR-008](changes/008-recent-cover-previews.md#3-cover-render-ipc--disk-cache)**: Adds `get_recent_cover` (`{ path: String, max_side_px?: u32 } -> tauri::ipc::Response`) returning `[width: u32 LE][height: u32 LE][RGBA8]` cover thumbnails backed by `<app_data_dir>/covers/` disk caching.
+>
+> **Amended by [CR-009](changes/009-clickable-pdf-links.md#4-ipc-commands--wire-dtos)**: Adds `get_page_links` (`{ document_id: u64, page_index: usize } -> Vec<PageLink>`) and `open_external_url` (`{ url: String } -> ()`).
 
 ### Binary `render_page` Wire Format
 - Bytes `0..4`: `width_px` as unsigned 32-bit little-endian (`u32::to_le_bytes`).
@@ -211,6 +218,8 @@ Apply `.agents/skills/frontend-design/SKILL.md` (two-pass design plan + self-cri
 > **Amended by [CR-002](changes/002-integrated-titlebar-window-controls.md#3-window-chrome--layout)**: Native OS window decorations are disabled (`decorations: false`); `#tab-strip` serves as the integrated borderless titlebar (with draggable region and window caption controls) in both `>= 1`-tab and `0`-tab states.
 >
 > **Amended by [CR-003](changes/003-tab-strip-reorder.md#3-reordering-behavior--visual-feedback)**: Tabs in `#tab-list` support horizontal pointer drag-and-drop reordering with live sibling displacement and overflow edge auto-scroll.
+>
+> **Amended by [CR-009](changes/009-clickable-pdf-links.md#5-frontend-link-layer--navigation-history)**: The document toolbar adds compact `Back` and `Forward` navigation buttons after `#toc-toggle-btn`, and pages host a visually silent `.link-layer` overlay.
 
 ### Core Layout Wireframe
 
@@ -295,6 +304,8 @@ src/
 > **Amended by [CR-003](changes/003-tab-strip-reorder.md#4-keyboard-reordering--shortcut-order)**: Focused tabs support `Ctrl+Shift+ArrowLeft` / `Ctrl+Shift+ArrowRight` to reorder tabs; `Ctrl+Tab` and `Ctrl+1..9` follow the reordered tab order.
 >
 > **Amended by [CR-006](changes/006-home-recent-search.md#4-filtering--keyboard-rules)**: `Ctrl+F` focuses the Home recent-files search input when Home displays recent history; `Esc` clears a non-empty filter before blurring.
+>
+> **Amended by [CR-009](changes/009-clickable-pdf-links.md#5-frontend-link-layer--navigation-history)**: Adds `Alt+ArrowLeft` / `Alt+ArrowRight` (and mouse buttons `3` / `4`) for per-tab Back/Forward history, plus `Tab` / `Enter` on focusable page links.
 
 ---
 

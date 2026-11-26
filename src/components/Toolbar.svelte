@@ -3,6 +3,7 @@
   import type { AppActions } from "../lib/state/actions";
   import type { AppStore } from "../lib/state/app-store.svelte";
   import type { TransitionHooks } from "../lib/state/types";
+  import ArrowIcon from "./icons/ArrowIcon.svelte";
   import FitPageIcon from "./icons/FitPageIcon.svelte";
   import FitWidthIcon from "./icons/FitWidthIcon.svelte";
   import FolderIcon from "./icons/FolderIcon.svelte";
@@ -122,6 +123,31 @@
       onclick={() => actions.toggleToc()}
     >
       <TocIcon />
+    </button>
+
+    <span class="toolbar-sep" aria-hidden="true"></span>
+
+    <button
+      id="nav-back-btn"
+      class="icon-btn"
+      type="button"
+      title="Back (Alt+Left)"
+      aria-label="Back"
+      disabled={!toolbarModel?.canGoBack}
+      onclick={() => actions.navigateHistory(-1)}
+    >
+      <ArrowIcon direction="left" />
+    </button>
+    <button
+      id="nav-forward-btn"
+      class="icon-btn"
+      type="button"
+      title="Forward (Alt+Right)"
+      aria-label="Forward"
+      disabled={!toolbarModel?.canGoForward}
+      onclick={() => actions.navigateHistory(1)}
+    >
+      <ArrowIcon direction="right" />
     </button>
   </div>
 
