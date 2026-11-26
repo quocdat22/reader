@@ -112,6 +112,8 @@ Execute phases sequentially. Complete every item in a phase's **Exit Gate** befo
 > **Amended by [CR-004](changes/004-paginated-unbounded-recents.md#5-verification-checklist)**: `src/empty-state.js` paginates `recent_files` at 10 items per page when more than 10 files exist; see CR-004 for verification checks.
 >
 > **Amended by [CR-006](changes/006-home-recent-search.md#5-verification-checklist)**: `.recent-header` in `src/empty-state.js` supports live filtering across recent file titles and paths; see CR-006 for verification checks.
+>
+> **Amended by [CR-007](frontend-svelte5/phases/phase-3-shell-home-and-reading-viewport.md)**: UI shell, tab strip (`src/lib/engines/tab-drag.ts`), home screen (including CR-006 recent search), toolbar, and virtualized viewport (`src/lib/engines/viewport.ts`) were migrated to Svelte 5 components and TypeScript engines.
 
 ---
 
@@ -128,6 +130,9 @@ Execute phases sequentially. Complete every item in a phase's **Exit Gate** befo
      - Ensure shortcuts do not hijack typing when an `<input>` is focused (except `Esc` and global chords like `Ctrl+O`/`Ctrl+F`/`Ctrl+W`).
 - **Exit Gate**:
   - Live verification on a local `tests/fixtures/*.pdf`: TOC renders nested chapters cleanly, updates cleanly across tab switches, jumps accurately, and all keyboard & tab shortcuts work cleanly.
+
+> [!NOTE]
+> **Amended by [CR-007](frontend-svelte5/phases/phase-4-toc-search-and-shortcuts.md)**: TOC outline drawer (`src/components/TocDrawer.svelte`, `src/components/TocTree.svelte`), chapter state, and global keyboard shortcut routing (`src/lib/engines/shortcuts.ts`) were migrated to Svelte 5 and TypeScript.
 
 ---
 
@@ -149,6 +154,9 @@ Execute phases sequentially. Complete every item in a phase's **Exit Gate** befo
   - Live verification on a local `tests/fixtures/*.pdf`:
     - Selecting and copying text (`Ctrl+C`) across words/lines matches rendered page content accurately.
     - Searching terms finds matches across pages, highlights exact regions even after zooming, cycles cleanly between matches, and never leaks highlights when switching tabs.
+
+> [!NOTE]
+> **Amended by [CR-007](frontend-svelte5/phases/phase-4-toc-search-and-shortcuts.md)**: Text layer (`src/lib/engines/text-layer.ts`), search bar (`src/components/SearchBar.svelte`), and highlight geometry helpers were migrated to Svelte 5 and TypeScript.
 
 ---
 
@@ -175,3 +183,5 @@ Execute phases sequentially. Complete every item in a phase's **Exit Gate** befo
 
 > [!NOTE]
 > **Amended by [CR-005](changes/005-pdfium-render-engine.md#6-verification-checklist)**: Phase 6 release verification confirms `cargo tauri build` bundles `pdfium.dll` and `PDFIUM-LICENSE.txt` and launches cleanly outside the dev tree.
+>
+> **Amended by [CR-007](frontend-svelte5/phases/phase-5-cleanup-hardening-and-release.md)**: Frontend verification includes `pnpm verify`, legacy `src/*.js` / `src/styles.css` removal, zero inline script/style CSP compliance in `dist/index.html`, and `cargo tauri build` (`beforeBuildCommand: "pnpm build"`, `frontendDist: "../dist"`).

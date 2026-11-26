@@ -30,6 +30,9 @@ Concise architectural, interface, and visual specification for `reader` (`com.ro
 - Node/npm toolchains, bundlers, or frontend frameworks.
 - Multi-format implementations beyond PDF (only the Rust trait boundary is built in v1).
 
+> [!NOTE]
+> **Amended by [CR-007](frontend-svelte5/README.md)**: While the runtime remains dependency-minimal with zero CSS frameworks, the frontend architecture moved from vanilla HTML/JS to **Vite + TypeScript + Svelte 5 (Runes)** managed with **pnpm** and compiled into static ES modules under `dist/` (`withGlobalTauri: false`). See [CR-007 Architecture](frontend-svelte5/ARCHITECTURE.md).
+
 ---
 
 ## 2. System Architecture
@@ -50,6 +53,9 @@ Concise architectural, interface, and visual specification for `reader` (`com.ro
 |  - backend/      DocumentBackend trait + PdfBackend (mupdf)       |
 +-------------------------------------------------------------------+
 ```
+
+> [!NOTE]
+> **Amended by [CR-007](frontend-svelte5/README.md)**: The WebView frontend (`src/`) is built via Vite (`dist/`) using Svelte 5 reactive UI components (`src/components/`) over a `.svelte.ts` Runes state layer (`src/lib/state/`), pure domain helpers (`src/lib/domain/`), and imperative TypeScript rendering/interaction engines (`src/lib/engines/viewport.ts`, `src/lib/engines/text-layer.ts`, `src/lib/engines/tab-drag.ts`, `src/lib/engines/shortcuts.ts`), communicating with the Rust backend via `src/lib/ipc/client.ts` (`@tauri-apps/api`). See [CR-007 Architecture](frontend-svelte5/ARCHITECTURE.md).
 
 ### Target Platforms & MuPDF Engine
 - **Primary target**: Windows x64 (`x86_64-pc-windows-msvc`) for development, testing, and bundling. Keep path handling and shortcuts cross-platform-clean (`Ctrl` / `Cmd` awareness, `std::path::PathBuf`).
@@ -137,6 +143,9 @@ pub trait DocumentBackend {
 ## 4. IPC Contract
 
 All commands are invoked via `window.__TAURI__.core.invoke`.
+
+> [!NOTE]
+> **Amended by [CR-007](frontend-svelte5/README.md)**: Frontend IPC calls now use the typed adapter in `src/lib/ipc/client.ts` backed by `@tauri-apps/api` and `@tauri-apps/plugin-dialog`, with `withGlobalTauri: false` in `src-tauri/tauri.conf.json`. Command signatures, payloads, and binary `render_page` buffers remain unchanged.
 
 | Command | Input | Output | Notes |
 | --- | --- | --- | --- |
@@ -247,6 +256,9 @@ src/
   empty-state.js   Drop zone + recent files list (when no tabs are open)
   shortcuts.js     Centralized keyboard shortcut router
 ```
+
+> [!NOTE]
+> **Amended by [CR-007](frontend-svelte5/README.md)**: The vanilla `src/*.js` and `src/styles.css` modules listed above were replaced at CR-007 Phase 5 by TypeScript/Svelte 5 modules under `src/main.ts`, `src/App.svelte`, `src/components/`, `src/lib/{domain,engines,ipc,state}/`, and `src/styles/`. See [CR-007 Architecture](frontend-svelte5/ARCHITECTURE.md) for the live module tree.
 
 ### Virtualized Viewport & Tab Memory Rules
 - Keep **only the active tab** mounted in the virtualized viewport DOM; on tab switch, snapshot the outgoing tab's scroll/page/zoom/search state, release its `<canvas>` backing stores (`canvas.width = 0; canvas.height = 0`), bump the render epoch, and mount the target tab immediately from its cached `page_dimensions`.

@@ -8,7 +8,7 @@ import svelteConfig from "./svelte.config.js";
 
 export default defineConfig(
   {
-    ignores: ["dist/", "coverage/", "src-tauri/", ".agents/", "src/*.js"],
+    ignores: ["dist/", "coverage/", "src-tauri/", ".agents/"],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

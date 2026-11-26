@@ -1,6 +1,6 @@
 # Reader
 
-A minimalist desktop PDF reader built with **Tauri v2**, **Rust (edition 2024)**, **PDFium** (`pdfium-render v0.9.6`), and **Vanilla HTML/CSS/JS** — with zero Node.js, npm, or frontend bundler.
+A minimalist desktop PDF reader built with **Tauri v2**, **Rust (edition 2024)**, **PDFium** (`pdfium-render v0.9.6`), and **Vite + TypeScript + Svelte 5** (managed with `pnpm`).
 
 Reader treats the document page as the sole focus: a slim tab strip, a single-row toolbar, a quiet empty state, and a virtualized HiDPI reading viewport backed by a dedicated single-threaded Rust PDF engine.
 
@@ -27,7 +27,7 @@ Reader v1 intentionally keeps a tight scope (see [docs/SPEC.md](docs/SPEC.md) fo
 - Dark or sepia reading modes and PDF page color inversion
 - Clickable internal or external PDF hyperlinks
 - Split views or multi-window session sync
-- Node.js / npm toolchains, TypeScript build steps, or frontend frameworks
+- CSS frameworks, client routers, extra state libraries, or heavy PDF JS wrappers
 - Document formats beyond PDF in v1 (the `DocumentBackend` Rust trait defines the boundary for future formats)
 
 ---
@@ -60,12 +60,13 @@ On macOS, `Cmd` also works for primary modifier chords (`Ctrl+Tab` / `Ctrl+Shift
 Windows x64 (`x86_64-pc-windows-msvc`) is the primary verified target for development, testing, and release bundling.
 
 1. **Rust toolchain** (with edition 2024 support, e.g. via [rustup](https://rustup.rs/), MSVC target)
-2. **Tauri CLI v2**:
+2. **Node.js & `pnpm`** (to build, type-check, lint, and test the Vite + TypeScript + Svelte 5 frontend)
+3. **Tauri CLI v2**:
    ```powershell
    cargo install tauri-cli --version "^2.0.0" --locked
    ```
-3. **Microsoft Edge WebView2 Runtime** (pre-installed on Windows 10/11)
-4. **PDFium runtime binary (`pdfium.dll`)** — downloaded and SHA-256-verified automatically via `scripts/fetch-pdfium.ps1` (pinned to `bblanchon/pdfium-binaries` `chromium/8125` no-V8 build; no `MSBuild` or `libclang` required for the PDF engine).
+4. **Microsoft Edge WebView2 Runtime** (pre-installed on Windows 10/11)
+5. **PDFium runtime binary (`pdfium.dll`)** — downloaded and SHA-256-verified automatically via `scripts/fetch-pdfium.ps1` (pinned to `bblanchon/pdfium-binaries` `chromium/8125` no-V8 build; no `MSBuild` or `libclang` required for the PDF engine).
 
 ### Clone & Run in Development
 
@@ -73,10 +74,13 @@ Windows x64 (`x86_64-pc-windows-msvc`) is the primary verified target for develo
 git clone <repo-url>
 cd reader
 
+# Install frontend dependencies
+pnpm install --frozen-lockfile
+
 # Download pinned pdfium.dll into src-tauri/resources/ (idempotent, SHA-256 verified)
 .\scripts\fetch-pdfium.ps1
 
-# Launch the desktop app
+# Launch the desktop app (starts Vite dev server automatically via beforeDevCommand)
 cargo tauri dev
 
 # Or launch directly with a PDF file
@@ -98,10 +102,11 @@ Tauri v2 bundles `pdfium.dll` and `PDFIUM-LICENSE.txt` via `bundle.resources` di
 
 ```text
 +-------------------------------------------------------------------+
-| Frontend: Vanilla HTML / CSS / ES Modules (src/)                  |
-|  - Slim Tab Strip + Toolbar, Empty State, TOC Drawer, Search Bar  |
-|  - Virtualized Canvas Viewport (active tab) + Text/Highlight Layer|
-|  - Calls Rust via window.__TAURI__.core.invoke + webview events   |
+| Frontend: Vite + TypeScript + Svelte 5 (src/ -> dist/)            |
+|  - Svelte 5 components (TabStrip, Toolbar, HomeScreen, TOC, Search) |
+|  - Runes state (src/lib/state/) + pure domain helpers (domain/)   |
+|  - Imperative engines (viewport, text-layer, tab-drag, shortcuts) |
+|  - Typed IPC via @tauri-apps/api + plugin-dialog (withGlobalTauri: false) |
 +----------------------------+--------------------------------------+
                              | Tauri IPC (JSON DTOs + Binary RGBA8)
 +----------------------------v--------------------------------------+
@@ -126,25 +131,26 @@ Key architectural decisions:
 .
 ├── docs/
 │   ├── SPEC.md                 # Product scope, IPC contract, and visual spec
-│   └── PHASES.md               # Phased implementation roadmap and exit gates
+│   ├── PHASES.md               # Phased implementation roadmap and exit gates
+│   ├── CHANGES.md              # Post-v1 change index and authoring rules
+│   └── frontend-svelte5/       # CR-007 Svelte 5 + Vite + TypeScript architecture & phases
+├── public/                     # Static assets copied to dist/ (logo.png)
 ├── scripts/
 │   └── fetch-pdfium.ps1        # Fetches & SHA-256-verifies pinned pdfium.dll (chromium/8125)
-├── src/                        # Vanilla HTML/CSS/ES module frontend
-│   ├── index.html              # Semantic shell (chrome, empty state, reader shell)
-│   ├── styles.css              # Design tokens and flat-specificity styles
-│   ├── main.js                 # App bootstrap, tab coordination, drag-drop, persistence
-│   ├── api.js                  # Typed wrapper over window.__TAURI__ invoke/events
-│   ├── tabs.js                 # Slim tab strip and per-tab state
-│   ├── toolbar.js              # Document toolbar (page jump, zoom, fit, toggles)
-│   ├── viewport.js             # Virtualized HiDPI canvas viewport & eviction
-│   ├── text-layer.js           # Lazy transparent text overlay & copy formatting
-│   ├── toc.js                  # Collapsible TOC outline drawer
-│   ├── search.js               # Per-tab Ctrl+F search bar & match navigation
-│   ├── empty-state.js          # Drop zone, recent files list, inline errors
-│   └── shortcuts.js            # Centralized keyboard and Ctrl+Wheel router
+├── index.html                  # Vite HTML mount shell (<div id="app"> + /src/main.ts)
+├── src/                        # Svelte 5 + TypeScript frontend
+│   ├── main.ts                 # App mount, initial hydration, and native drag-drop wiring
+│   ├── App.svelte              # Top-level chrome, Home/Reader switcher, and shortcuts wiring
+│   ├── components/             # Svelte 5 UI components (TabStrip, Toolbar, TocDrawer, SearchBar, etc.)
+│   ├── lib/
+│   │   ├── domain/             # Pure TypeScript domain helpers (zoom, outline, recents, search, title)
+│   │   ├── engines/            # Imperative TypeScript engines (viewport, text-layer, tab-drag, shortcuts)
+│   │   ├── ipc/                # Typed IPC client, binary RGBA decoder, and error mapping
+│   │   └── state/              # Svelte 5 Runes store, actions, doc-scope tokens, persistence
+│   └── styles/                 # Design tokens, base accessibility rules, and viewport layer CSS
 ├── src-tauri/                  # Tauri v2 / Rust backend (reader_lib)
 │   ├── Cargo.toml              # Crate config, pdfium-render features, strict clippy lints
-│   ├── tauri.conf.json         # Window defaults (1100x800, min 640x480) & pdfium.dll resources
+│   ├── tauri.conf.json         # Window defaults, CSP, dist wiring, & pdfium.dll resources
 │   ├── resources/              # Gitignored pdfium.dll & license fetched by scripts/fetch-pdfium.ps1
 │   ├── capabilities/           # Minimal Tauri v2 permissions (core:default, dialog:allow-open)
 │   ├── src/
@@ -169,7 +175,13 @@ Key architectural decisions:
 
 ## Verification & Testing
 
-Run formatting, strict lints, and tests inside `src-tauri/`:
+Run frontend verification from repo root:
+
+```powershell
+pnpm verify
+```
+
+Run Rust formatting, strict lints, and tests inside `src-tauri/`:
 
 ```powershell
 cd src-tauri

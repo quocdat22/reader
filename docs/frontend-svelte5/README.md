@@ -1,9 +1,9 @@
 # CR-007: Migrate Frontend to Vite + TypeScript + Svelte 5
 
 - **ID**: `CR-007`
-- **Status**: Proposed
+- **Status**: Implemented
 - **Scope**: Frontend architecture, toolchain, styling organization, automated testing, and Tauri v2 build wiring (`package.json`, `vite.config.ts`, `tsconfig.json`, `index.html`, `public/`, `src/`, `src-tauri/tauri.conf.json`, `.gitignore`, and governance docs upon completion). **Zero changes to Rust backend source code (`src-tauri/src/`), `DocumentBackend`, `DocumentWorker`, Tauri IPC command signatures, binary `render_page` wire format, or `state.json` schema.**
-- **Supersedes / Amends**: [docs/SPEC.md](../SPEC.md) (§1 Non-Goals, §2 Architecture, §4 IPC transport, §5 Frontend Module Structure), [docs/PHASES.md](../PHASES.md) (Phases 3–6), and [AGENTS.md](../../AGENTS.md) (frontend toolchain & verification rules — deferred until Phase 5 cutover).
+- **Supersedes / Amends**: [docs/SPEC.md](../SPEC.md) (§1 Non-Goals, §2 Architecture, §4 IPC transport, §5 Frontend Module Structure), [docs/PHASES.md](../PHASES.md) (Phases 3–6), and [AGENTS.md](../../AGENTS.md) (frontend toolchain & verification rules — updated at Phase 5 cutover).
 
 ---
 
