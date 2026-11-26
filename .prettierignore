@@ -1,0 +1,12 @@
+dist/
+coverage/
+src-tauri/
+pnpm-lock.yaml
+src/*.js
+src/styles.css
+docs/
+.agents/
+.vscode/
+AGENTS.md
+README.md
+skills-lock.json
