@@ -160,6 +160,9 @@ All commands are invoked via `window.__TAURI__.core.invoke`.
 | `save_reading_state` | `{ path: String, page_index: usize, zoom_mode: ZoomMode, zoom_scale: f32 }` | `()` | Debounced from frontend; atomically persisted. |
 | `remove_recent_file` | `{ path: String }` | `PersistedState` | Removes entry from recent files list. |
 
+> [!NOTE]
+> **Amended by [CR-008](changes/008-recent-cover-previews.md#3-cover-render-ipc--disk-cache)**: Adds `get_recent_cover` (`{ path: String, max_side_px?: u32 } -> tauri::ipc::Response`) returning `[width: u32 LE][height: u32 LE][RGBA8]` cover thumbnails backed by `<app_data_dir>/covers/` disk caching.
+
 ### Binary `render_page` Wire Format
 - Bytes `0..4`: `width_px` as unsigned 32-bit little-endian (`u32::to_le_bytes`).
 - Bytes `4..8`: `height_px` as unsigned 32-bit little-endian.
@@ -239,6 +242,8 @@ Apply `.agents/skills/frontend-design/SKILL.md` (two-pass design plan + self-cri
 > **Amended by [CR-004](changes/004-paginated-unbounded-recents.md#4-paginated-recent-section-ui)**: `#recent-section` paginates the unbounded `recent_files` history at 10 items per page with compact header pagination controls when more than 10 entries exist.
 >
 > **Amended by [CR-006](changes/006-home-recent-search.md#3-recent-header-search-ui)**: `.recent-header` includes a compact client-side search input filtering recent files by title and path alongside pagination.
+>
+> **Amended by [CR-008](changes/008-recent-cover-previews.md#4-recent-row-cover-ui--loader)**: Each `#recent-list` row renders a proportional first-page cover thumbnail (`40×52px` slot) on the left with a quiet placeholder for missing/unreadable files.
 
 ### Frontend Module Structure (`src/`)
 ```text

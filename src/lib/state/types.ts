@@ -126,5 +126,6 @@ export interface TransitionHooks {
   isFocusInToc?: () => boolean;
   captureViewportSnapshot?: (doc: DocState) => ViewportSnapshot | null;
   onDocumentClosed?: (documentId: number) => void;
+  onRecentCoverInvalidated?: (path: string) => void;
   viewportCommands?: ViewportCommandBridge;
 }

@@ -10,6 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
+use crate::covers;
 use crate::error::ReaderError;
 use crate::worker::{DocumentWorker, canonicalize_document_path};
 
@@ -325,6 +326,7 @@ impl PersistedState {
 pub struct AppState {
     worker: DocumentWorker,
     state_path: PathBuf,
+    cover_cache_dir: PathBuf,
     persisted: Mutex<PersistedState>,
     initial_file: Mutex<Option<PathBuf>>,
 }
@@ -338,10 +340,16 @@ impl AppState {
     pub fn new(state_path: PathBuf, initial_file: Option<PathBuf>) -> Result<Self, ReaderError> {
         let worker = DocumentWorker::spawn()?;
         let persisted = PersistedState::load_or_default(&state_path);
+        let cover_cache_dir = state_path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."))
+            .join("covers");
 
         Ok(Self {
             worker,
             state_path,
+            cover_cache_dir,
             persisted: Mutex::new(persisted),
             initial_file: Mutex::new(initial_file),
         })
@@ -351,6 +359,12 @@ impl AppState {
     #[must_use]
     pub fn worker(&self) -> &DocumentWorker {
         &self.worker
+    }
+
+    /// Returns the disk directory used to cache rendered recent-file cover previews.
+    #[must_use]
+    pub fn cover_cache_dir(&self) -> &Path {
+        &self.cover_cache_dir
     }
 
     /// Consumes and returns the startup CLI / OS "Open With" file path once.
@@ -429,6 +443,7 @@ impl AppState {
             .unwrap_or_else(PoisonError::into_inner);
         persisted.remove_recent(path, canonical_alt.as_deref());
         persisted.save_atomic(&self.state_path)?;
+        covers::remove_cached_cover(&self.cover_cache_dir, path, canonical_alt.as_deref());
         Ok(persisted.clone())
     }
 }
@@ -797,5 +812,33 @@ mod tests {
 
         assert!(state.positions.len() <= MAX_SAVED_POSITIONS);
         assert!(state.positions.contains_key("/docs/recent.pdf"));
+    }
+
+    #[test]
+    fn remove_recent_file_cleans_up_cached_cover() {
+        let dir = TempDirGuard::new("remove-cover-cache");
+        let pdf_path = dir.path.join("sample.pdf");
+        fs::write(&pdf_path, b"%PDF-1.4").expect("write dummy pdf");
+
+        let app_state = AppState::new(dir.state_file(), None).expect("create AppState");
+        let canonical = canonicalize_document_path(&pdf_path).expect("canonicalize dummy pdf");
+        let _ = app_state.record_document_open(&canonical, Some("Sample"), 4);
+
+        let key = canonical.to_string_lossy();
+        let cover = crate::backend::RenderedPage {
+            width_px: 2,
+            height_px: 2,
+            rgba: vec![255; 16],
+        };
+        covers::write_cached_cover(app_state.cover_cache_dir(), &key, &canonical, 160, &cover)
+            .expect("write cover cache");
+        let cache_file = covers::cover_cache_path(app_state.cover_cache_dir(), &key);
+        assert!(cache_file.exists());
+
+        let updated = app_state
+            .remove_recent_file(&key)
+            .expect("remove recent entry");
+        assert_eq!(updated.recent_files, []);
+        assert!(!cache_file.exists());
     }
 }

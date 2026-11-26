@@ -56,6 +56,7 @@ export interface ReaderApi {
   searchDocument(documentId: number, query: string): Promise<SearchMatch[]>;
   saveReadingState(params: SaveReadingStateParams): Promise<void>;
   removeRecentFile(path: string): Promise<PersistedState>;
+  getRecentCover(path: string, maxSidePx?: number): Promise<ImageData>;
   pickPdfFiles(): Promise<string[]>;
   subscribeDragDrop(handlers: DragDropHandlers): Promise<() => void>;
   getWindowControls(): WindowControlsApi;
@@ -149,6 +150,14 @@ export function createTauriReaderApi(): ReaderApi {
 
     removeRecentFile: (path: string) =>
       invokeCommand<PersistedState>("remove_recent_file", { path }),
+
+    getRecentCover: async (path: string, maxSidePx?: number) => {
+      const buffer = await invokeCommand<ArrayBuffer>("get_recent_cover", {
+        path,
+        max_side_px: maxSidePx ?? null,
+      });
+      return decodeRenderFrame(buffer);
+    },
 
     pickPdfFiles: async () => {
       try {

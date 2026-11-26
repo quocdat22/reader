@@ -17,6 +17,7 @@ use crate::backend::{
     DocumentBackend, DocumentMetadata, OutlineItem, PageDimensions, RenderedPage, SearchMatch,
     TextSpan, open,
 };
+use crate::covers::compute_cover_dimensions;
 use crate::error::ReaderError;
 
 /// Metadata returned when opening a document (or focusing an already-open tab).
@@ -56,6 +57,11 @@ enum WorkerRequest {
         width_px: u32,
         height_px: u32,
         epoch: u64,
+        reply: oneshot::Sender<Result<RenderedPage, ReaderError>>,
+    },
+    RenderCover {
+        path: PathBuf,
+        max_side_px: u32,
         reply: oneshot::Sender<Result<RenderedPage, ReaderError>>,
     },
     Outline {
@@ -203,6 +209,27 @@ impl DocumentWorker {
         await_reply(reply_rx).await
     }
 
+    /// Renders page `0` of `path` scaled proportionally within `max_side_px`.
+    ///
+    /// Reuses an already-open tab's backend when possible, or opens `path` transiently
+    /// on the worker thread and drops it immediately after rasterization.
+    ///
+    /// # Errors
+    /// Propagates filesystem, format, `PDFium`, or worker channel errors as [`ReaderError`].
+    pub async fn render_cover(
+        &self,
+        path: PathBuf,
+        max_side_px: u32,
+    ) -> Result<RenderedPage, ReaderError> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.send_request(WorkerRequest::RenderCover {
+            path,
+            max_side_px,
+            reply: reply_tx,
+        })?;
+        await_reply(reply_rx).await
+    }
+
     /// Returns the nested table-of-contents outline for `document_id`.
     ///
     /// # Errors
@@ -333,6 +360,20 @@ fn run_worker_loop(
                 );
                 let _ = reply.send(result);
             }
+            WorkerRequest::RenderCover {
+                path,
+                max_side_px,
+                reply,
+            } => {
+                let result = handle_render_cover(
+                    &path,
+                    max_side_px,
+                    &mut opener,
+                    &mut open_docs,
+                    &path_to_id,
+                );
+                let _ = reply.send(result);
+            }
             WorkerRequest::Outline { document_id, reply } => {
                 let result = open_docs
                     .get(&document_id)
@@ -441,6 +482,40 @@ fn handle_render(
     }
 
     Ok(rendered)
+}
+
+fn handle_render_cover(
+    path: &Path,
+    max_side_px: u32,
+    opener: &mut BackendOpener,
+    open_docs: &mut HashMap<u64, OpenDocument>,
+    path_to_id: &HashMap<PathBuf, u64>,
+) -> Result<RenderedPage, ReaderError> {
+    let canonical_path = canonicalize_document_path(path)?;
+
+    if let Some(&existing_id) = path_to_id.get(&canonical_path)
+        && let Some(existing) = open_docs.get_mut(&existing_id)
+    {
+        return render_backend_cover(existing.backend.as_mut(), max_side_px);
+    }
+
+    let mut transient = opener(&canonical_path)?;
+    render_backend_cover(transient.as_mut(), max_side_px)
+}
+
+fn render_backend_cover(
+    backend: &mut dyn DocumentBackend,
+    max_side_px: u32,
+) -> Result<RenderedPage, ReaderError> {
+    let Some(&first_page) = backend.page_dimensions().first() else {
+        return Err(ReaderError::PageOutOfRange {
+            page_index: 0,
+            page_count: 0,
+        });
+    };
+
+    let (width_px, height_px) = compute_cover_dimensions(first_page, max_side_px);
+    backend.render_page(0, width_px, height_px)
 }
 
 fn is_render_cancelled(
@@ -1005,5 +1080,50 @@ mod tests {
 
         assert!(matches!(res, Err(ReaderError::Cancelled)));
         assert_eq!(worker.current_render_epoch(), before_epoch);
+    }
+
+    #[tokio::test]
+    async fn render_cover_reuses_open_tab_and_drops_transient_backend_when_closed() {
+        let dir = TempDirGuard::new("render-cover");
+        let open_file = dir.create_dummy_pdf("open.pdf");
+        let closed_file = dir.create_dummy_pdf("closed.pdf");
+
+        let open_calls = Arc::new(AtomicUsize::new(0));
+        let drop_flags = Arc::new(Mutex::new(Vec::new()));
+        let render_calls = Arc::new(AtomicUsize::new(0));
+
+        let worker = DocumentWorker::spawn_with_opener(make_mock_opener(
+            Arc::clone(&open_calls),
+            Arc::clone(&drop_flags),
+            Arc::clone(&render_calls),
+            None,
+        ))
+        .expect("spawn worker");
+
+        let _open_doc = worker
+            .open_document(open_file.clone())
+            .await
+            .expect("open doc");
+        assert_eq!(open_calls.load(Ordering::SeqCst), 1);
+
+        let open_cover = worker
+            .render_cover(open_file, 160)
+            .await
+            .expect("cover for open doc");
+        assert_eq!(open_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(open_cover.width_px, 124);
+        assert_eq!(open_cover.height_px, 160);
+
+        let closed_cover = worker
+            .render_cover(closed_file, 160)
+            .await
+            .expect("cover for closed doc");
+        assert_eq!(open_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(closed_cover.width_px, 124);
+        assert_eq!(closed_cover.height_px, 160);
+
+        let flags = drop_flags.lock().expect("drop_flags lock");
+        assert!(!flags[0].load(Ordering::SeqCst));
+        assert!(flags[1].load(Ordering::SeqCst));
     }
 }

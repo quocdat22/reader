@@ -94,6 +94,9 @@ function createFakeApi(overrides: Partial<ReaderApi> = {}) {
       ...persisted,
       recent_files: persisted.recent_files.filter((item) => item.path !== path),
     }),
+    getRecentCover: async () => {
+      throw new ReaderApiError("internal", "Not implemented in state tests");
+    },
     pickPdfFiles: async () => [],
     subscribeDragDrop: async () => () => {},
     getWindowControls: () => ({
@@ -629,5 +632,29 @@ describe("Runes AppStore + AppActions", () => {
     expect(store.activeDoc?.search.open).toBe(true);
     expect(store.activeDoc?.search.query).toBe("alpha");
     expect(store.activeDoc?.search.matches).toHaveLength(1);
+  });
+
+  it("notifies onRecentCoverInvalidated when opening or removing recent files", async () => {
+    const invalidated: string[] = [];
+    const { actions } = createHarness(
+      {
+        openDocument: async () => makeOpenResponse(7, "/canonical/doc.pdf"),
+      },
+      {
+        onRecentCoverInvalidated: (path) => {
+          invalidated.push(path);
+        },
+      },
+    );
+    cleanups.push(() => actions.dispose());
+
+    await actions.openPath("/raw/doc.pdf");
+    await actions.removeRecent("/canonical/doc.pdf");
+
+    expect(invalidated).toEqual([
+      "/canonical/doc.pdf",
+      "/raw/doc.pdf",
+      "/canonical/doc.pdf",
+    ]);
   });
 });

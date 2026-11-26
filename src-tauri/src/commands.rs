@@ -8,8 +8,10 @@ use tauri::State;
 use tauri::ipc::Response;
 
 use crate::backend::{DocumentMetadata, OutlineItem, PageDimensions, SearchMatch, TextSpan};
+use crate::covers::{clamp_cover_max_side, read_cached_cover, write_cached_cover};
 use crate::error::ReaderError;
 use crate::state::{AppState, PersistedState, ReadingPosition, ZoomMode};
+use crate::worker::canonicalize_document_path;
 
 /// Payload returned to the frontend when a document is opened (or focused if already open).
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -197,6 +199,68 @@ pub async fn remove_recent_file(
 ) -> Result<PersistedState, ReaderError> {
     validate_non_empty_path(&path)?;
     state.remove_recent_file(&path)
+}
+
+/// Renders or serves from disk cache the first-page cover thumbnail for `path`
+/// as `[width: u32 LE][height: u32 LE][RGBA8]`.
+///
+/// # Errors
+/// - Returns [`ReaderError::InvalidDocument`] if `path` is empty or unreadable as a PDF.
+/// - Returns [`ReaderError::Io`] if `path` does not exist.
+/// - Returns [`ReaderError::UnsupportedFormat`], [`ReaderError::PasswordProtected`],
+///   [`ReaderError::PageOutOfRange`], or [`ReaderError::Internal`] on render failure.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn get_recent_cover(
+    state: State<'_, AppState>,
+    path: String,
+    max_side_px: Option<u32>,
+) -> Result<Response, ReaderError> {
+    validate_non_empty_path(&path)?;
+    let max_side = clamp_cover_max_side(max_side_px);
+    let cache_dir = state.cover_cache_dir().to_path_buf();
+    let raw_path = PathBuf::from(&path);
+
+    let canonical_path =
+        tauri::async_runtime::spawn_blocking(move || canonicalize_document_path(&raw_path))
+            .await
+            .map_err(|err| ReaderError::Internal(format!("cover canonicalize failed: {err}")))??;
+
+    let cache_dir_for_read = cache_dir.clone();
+    let canonical_for_read = canonical_path.clone();
+    let cached = tauri::async_runtime::spawn_blocking(move || {
+        let key = canonical_for_read.to_string_lossy();
+        read_cached_cover(&cache_dir_for_read, &key, &canonical_for_read, max_side)
+    })
+    .await
+    .map_err(|err| ReaderError::Internal(format!("cover cache read failed: {err}")))?;
+
+    if let Some(page) = cached {
+        return Ok(Response::new(page.to_ipc_bytes()));
+    }
+
+    let rendered = state
+        .worker()
+        .render_cover(canonical_path.clone(), max_side)
+        .await?;
+    let ipc_bytes = rendered.to_ipc_bytes();
+
+    let write_result = tauri::async_runtime::spawn_blocking(move || {
+        let key = canonical_path.to_string_lossy();
+        write_cached_cover(&cache_dir, &key, &canonical_path, max_side, &rendered)
+    })
+    .await;
+
+    match write_result {
+        Ok(Ok(())) => {}
+        Ok(Err(err)) => {
+            eprintln!("warning: failed to persist cover cache for {path}: {err}");
+        }
+        Err(err) => {
+            eprintln!("warning: cover cache write task failed for {path}: {err}");
+        }
+    }
+
+    Ok(Response::new(ipc_bytes))
 }
 
 fn validate_non_empty_path(path: &str) -> Result<(), ReaderError> {

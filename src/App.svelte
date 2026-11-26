@@ -107,7 +107,7 @@
   <NoticeBanner {store} {actions} />
 
   <main id="workspace" class="workspace">
-    <HomeScreen {store} {actions} />
+    <HomeScreen {store} {actions} {api} {hooks} />
 
     <div
       id="reader-shell"

@@ -1,15 +1,19 @@
 <script lang="ts">
+  import type { ReaderApi } from "../lib/ipc/client";
   import type { AppActions } from "../lib/state/actions";
   import type { AppStore } from "../lib/state/app-store.svelte";
+  import type { TransitionHooks } from "../lib/state/types";
   import CloseIcon from "./icons/CloseIcon.svelte";
   import RecentFiles from "./RecentFiles.svelte";
 
   interface Props {
     store: AppStore;
     actions: AppActions;
+    api: Pick<ReaderApi, "getRecentCover">;
+    hooks: TransitionHooks;
   }
 
-  let { store, actions }: Props = $props();
+  let { store, actions, api, hooks }: Props = $props();
   let openBtnEl = $state<HTMLButtonElement | null>(null);
   let errorActionBtnEl = $state<HTMLButtonElement | null>(null);
   let errorDismissBtnEl = $state<HTMLButtonElement | null>(null);
@@ -96,7 +100,7 @@
       </div>
     {/if}
 
-    <RecentFiles {store} {actions} />
+    <RecentFiles {store} {actions} {api} {hooks} />
   </div>
 </section>
 
@@ -113,7 +117,7 @@
 
   .empty-inner {
     width: 100%;
-    max-width: 500px;
+    max-width: 540px;
     display: flex;
     flex-direction: column;
     gap: 24px;

@@ -114,6 +114,8 @@ Execute phases sequentially. Complete every item in a phase's **Exit Gate** befo
 > **Amended by [CR-006](changes/006-home-recent-search.md#5-verification-checklist)**: `.recent-header` in `src/empty-state.js` supports live filtering across recent file titles and paths; see CR-006 for verification checks.
 >
 > **Amended by [CR-007](frontend-svelte5/phases/phase-3-shell-home-and-reading-viewport.md)**: UI shell, tab strip (`src/lib/engines/tab-drag.ts`), home screen (including CR-006 recent search), toolbar, and virtualized viewport (`src/lib/engines/viewport.ts`) were migrated to Svelte 5 components and TypeScript engines.
+>
+> **Amended by [CR-008](changes/008-recent-cover-previews.md#5-verification-checklist)**: Recent rows in `src/components/RecentFiles.svelte` display proportional first-page cover thumbnails loaded lazily via `src/lib/engines/recent-covers.ts` and `get_recent_cover`.
 
 ---
 

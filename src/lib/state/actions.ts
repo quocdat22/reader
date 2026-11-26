@@ -390,6 +390,10 @@ export function createAppActions({
       store.recentQuery = "";
       store.recentPage = 1;
       requestFocus("viewport");
+      hooks.onRecentCoverInvalidated?.(response.canonical_path);
+      if (path !== response.canonical_path) {
+        hooks.onRecentCoverInvalidated?.(path);
+      }
       void refreshRecents();
       return { ok: true, error: null };
     } catch (err) {
@@ -1102,6 +1106,7 @@ export function createAppActions({
       store.recents = Array.isArray(updated.recent_files)
         ? updated.recent_files
         : [];
+      hooks.onRecentCoverInvalidated?.(path);
     } catch (err) {
       console.error("Failed to remove recent file:", err);
     }

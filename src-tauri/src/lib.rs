@@ -2,6 +2,7 @@
 
 pub mod backend;
 pub mod commands;
+pub mod covers;
 pub mod error;
 pub mod state;
 pub mod worker;
@@ -37,6 +38,7 @@ pub fn run() {
             commands::search_document,
             commands::save_reading_state,
             commands::remove_recent_file,
+            commands::get_recent_cover,
         ])
         .run(tauri::generate_context!());
 

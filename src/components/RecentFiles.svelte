@@ -1,23 +1,103 @@
 <script lang="ts">
   import { tick } from "svelte";
   import { splitParentDirectory } from "../lib/domain/title";
+  import {
+    createRecentCoverLoader,
+    type CoverEntry,
+    type RecentCoverLoader,
+  } from "../lib/engines/recent-covers";
+  import type { ReaderApi } from "../lib/ipc/client";
   import type { AppActions } from "../lib/state/actions";
   import type { AppStore } from "../lib/state/app-store.svelte";
+  import type { TransitionHooks } from "../lib/state/types";
   import ChevronIcon from "./icons/ChevronIcon.svelte";
   import CloseIcon from "./icons/CloseIcon.svelte";
   import SearchIcon from "./icons/SearchIcon.svelte";
 
+  const COVER_SLOT_WIDTH_PX = 40;
+  const COVER_SLOT_HEIGHT_PX = 52;
+
   interface Props {
     store: AppStore;
     actions: AppActions;
+    api: Pick<ReaderApi, "getRecentCover">;
+    hooks: TransitionHooks;
   }
 
-  let { store, actions }: Props = $props();
+  let { store, actions, api, hooks }: Props = $props();
   let searchInputEl = $state<HTMLInputElement | null>(null);
   let recentListEl = $state<HTMLUListElement | null>(null);
   let prevBtnEl = $state<HTMLButtonElement | null>(null);
   let nextBtnEl = $state<HTMLButtonElement | null>(null);
   let pageListEl = $state<HTMLDivElement | null>(null);
+  let coverLoader = $state<RecentCoverLoader | null>(null);
+  let coverRevision = $state(0);
+
+  $effect(() => {
+    const loader = createRecentCoverLoader({
+      api,
+      onChange: () => {
+        coverRevision += 1;
+      },
+    });
+    coverLoader = loader;
+    hooks.onRecentCoverInvalidated = (path) => {
+      loader.invalidate(path);
+    };
+
+    return () => {
+      delete hooks.onRecentCoverInvalidated;
+      coverLoader = null;
+      loader.destroy();
+    };
+  });
+
+  $effect(() => {
+    const loader = coverLoader;
+    if (!loader) {
+      return;
+    }
+    if (store.shellMode === "document") {
+      loader.clearPending();
+      return;
+    }
+    loader.syncVisible(store.pagedRecents.map((item) => item.path));
+  });
+
+  function readCoverEntry(path: string): CoverEntry | undefined {
+    return coverRevision >= 0 ? coverLoader?.get(path) : undefined;
+  }
+
+  function computeCoverBoxStyle(imageData: ImageData): string {
+    const scale = Math.min(
+      COVER_SLOT_WIDTH_PX / Math.max(1, imageData.width),
+      COVER_SLOT_HEIGHT_PX / Math.max(1, imageData.height),
+    );
+    const width = Math.max(1, Math.round(imageData.width * scale));
+    const height = Math.max(1, Math.round(imageData.height * scale));
+    return `width: ${width}px; height: ${height}px;`;
+  }
+
+  function paintCoverCanvas(
+    canvas: HTMLCanvasElement,
+    imageData: ImageData,
+  ): { update(next: ImageData): void } {
+    const draw = (data: ImageData) => {
+      if (canvas.width !== data.width || canvas.height !== data.height) {
+        canvas.width = data.width;
+        canvas.height = data.height;
+      }
+      const ctx = canvas.getContext("2d", { alpha: false });
+      ctx?.putImageData(data, 0, 0);
+    };
+
+    draw(imageData);
+    return {
+      update(next: ImageData) {
+        draw(next);
+      },
+    };
+  }
 
   $effect(() => {
     const req = store.focusRequest;
@@ -221,6 +301,7 @@
   >
     {#each store.pagedRecents as item (item.path)}
       {@const dirText = splitParentDirectory(item.path)}
+      {@const cover = readCoverEntry(item.path)}
       <li class="recent-item">
         <button
           type="button"
@@ -233,6 +314,45 @@
             void actions.openPath(item.path, { fromRecent: true });
           }}
         >
+          <span class="recent-cover-slot" aria-hidden="true">
+            {#if cover?.status === "ready"}
+              <span
+                class="recent-cover-sheet"
+                style={computeCoverBoxStyle(cover.imageData)}
+              >
+                <canvas
+                  class="recent-cover-canvas"
+                  use:paintCoverCanvas={cover.imageData}
+                ></canvas>
+              </span>
+            {:else if cover?.status === "unavailable"}
+              <span class="recent-cover-sheet recent-cover-sheet--unavailable">
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  aria-hidden="true"
+                >
+                  <path
+                    d="M4.25 2.5h5l3 3v8a.75.75 0 01-.75.75h-7.25a.75.75 0 01-.75-.75v-10.25a.75.75 0 01.75-.75z"
+                    stroke="currentColor"
+                    stroke-width="1.2"
+                    stroke-linejoin="round"
+                  />
+                  <path
+                    d="M9.25 2.5v3h3"
+                    stroke="currentColor"
+                    stroke-width="1.2"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </span>
+            {:else}
+              <span class="recent-cover-sheet recent-cover-sheet--loading"
+              ></span>
+            {/if}
+          </span>
           <span class="recent-main">
             <span class="recent-title">{item.title || item.path}</span>
             {#if dirText}
@@ -498,10 +618,10 @@
     flex: 1 1 auto;
     min-width: 0;
     display: flex;
-    align-items: baseline;
+    align-items: center;
     justify-content: space-between;
-    gap: 16px;
-    padding: 9px 8px;
+    gap: 12px;
+    padding: 8px;
     margin: 0 -8px;
     border: none;
     border-radius: var(--radius-sm);
@@ -513,6 +633,45 @@
 
   .recent-row-btn:hover {
     background-color: var(--hover-subtle);
+  }
+
+  .recent-cover-slot {
+    flex: 0 0 40px;
+    width: 40px;
+    height: 52px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .recent-cover-sheet {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 2px;
+    background-color: var(--surface-paper);
+    box-shadow: var(--sheet-shadow);
+    overflow: hidden;
+  }
+
+  .recent-cover-sheet--loading {
+    width: 36px;
+    height: 48px;
+    background-color: var(--surface-paper);
+  }
+
+  .recent-cover-sheet--unavailable {
+    width: 36px;
+    height: 48px;
+    background-color: var(--surface-desk);
+    box-shadow: 0 0 0 1px var(--border-subtle);
+    color: var(--ink-muted);
+  }
+
+  .recent-cover-canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
   }
 
   .recent-main {

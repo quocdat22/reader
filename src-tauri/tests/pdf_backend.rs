@@ -279,3 +279,28 @@ async fn worker_opens_deduplicates_renders_and_closes_fixture() {
         .await;
     assert!(matches!(after_close, Err(ReaderError::Cancelled)));
 }
+
+#[tokio::test]
+async fn worker_renders_proportional_cover_for_fixture() {
+    let Some(fixture) = fixture_or_skip() else {
+        return;
+    };
+
+    let worker = DocumentWorker::spawn().expect("worker should spawn");
+    let cover = worker
+        .render_cover(fixture, 160)
+        .await
+        .expect("worker should render first-page cover");
+
+    assert!(cover.width_px > 0 && cover.width_px <= 160);
+    assert!(cover.height_px > 0 && cover.height_px <= 160);
+    assert_eq!(cover.width_px.max(cover.height_px), 160);
+    assert_eq!(
+        cover.rgba.len(),
+        (cover.width_px as usize) * (cover.height_px as usize) * 4
+    );
+    assert!(
+        cover.rgba.iter().any(|&byte| byte != 0),
+        "cover RGBA buffer should not be all zeros"
+    );
+}
