@@ -1,0 +1,43 @@
+/* Reader — Minimalist desktop reading room
+ * Locked 6-token palette:
+ *   --surface-desk   #E4E7EC  reading viewport backdrop framing pure-white pages
+ *   --surface-chrome #EEF0F4  recessed tab strip & empty-state backdrop
+ *   --surface-paper  #FFFFFF  active tab, unified document toolbar, inputs, PDF sheets
+ *   --ink-primary    #1A1F2B  primary labels, headings, active tab title, numerals
+ *   --ink-muted      #5A6475  inactive tabs, secondary paths, rest-state icons
+ *   --accent-cobalt  #1E4DB7  single deliberate accent (active tab rule, CTA, focus, drop cue)
+ */
+
+:root {
+  --surface-desk: #e4e7ec;
+  --surface-chrome: #eef0f4;
+  --surface-paper: #ffffff;
+  --ink-primary: #1a1f2b;
+  --ink-muted: #5a6475;
+  --accent-cobalt: #1e4db7;
+
+  --accent-hover: #183e96;
+  --accent-tint: rgba(30, 77, 183, 0.1);
+  --hover-subtle: rgba(26, 31, 43, 0.06);
+  --active-subtle: rgba(26, 31, 43, 0.1);
+  --border-subtle: rgba(26, 31, 43, 0.11);
+  --border-strong: rgba(26, 31, 43, 0.18);
+  --sheet-shadow:
+    0 1px 3px rgba(26, 31, 43, 0.1), 0 0 0 1px rgba(26, 31, 43, 0.06);
+
+  --error-ink: #9a1e15;
+  --error-bg: #fdf2f1;
+  --error-border: rgba(154, 30, 21, 0.24);
+
+  --selection-bg: rgba(30, 77, 183, 0.24);
+  --search-hit-bg: rgba(230, 168, 24, 0.26);
+  --search-hit-active-bg: rgba(230, 154, 16, 0.44);
+
+  --font-ui:
+    "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont,
+    sans-serif;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --tab-strip-height: 32px;
+  --toolbar-height: 36px;
+}
