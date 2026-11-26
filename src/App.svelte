@@ -153,6 +153,7 @@
     flex-direction: column;
     height: 100%;
     width: 100%;
+    overflow: hidden;
   }
 
   .chrome {
@@ -165,6 +166,8 @@
   .workspace {
     flex: 1 1 auto;
     min-height: 0;
+    min-width: 0;
+    overflow: hidden;
     display: flex;
     flex-direction: column;
     position: relative;

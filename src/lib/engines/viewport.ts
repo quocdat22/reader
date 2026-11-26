@@ -155,6 +155,8 @@ export function createViewportEngine({
   let currentDpr = getEffectiveDpr();
   let intersectionObserver: IntersectionObserver | null = null;
   let dprMediaQuery: MediaQueryList | null = null;
+  let pinnedJump: { pageIndex: number; scrollTop: number } | null = null;
+  let pendingInitialPositionRestore = false;
   let destroyed = false;
 
   function bumpEpoch(): number {
@@ -503,10 +505,17 @@ export function createViewportEngine({
     if (!activeDoc) {
       return;
     }
-    const { activePageIndex } = getCurrentVisibleRange();
     const scrollTop = viewportEl.scrollTop;
-    const pageChanged = activeDoc.pageIndex !== activePageIndex;
+    let { activePageIndex } = getCurrentVisibleRange();
+    if (pinnedJump) {
+      if (Math.abs(scrollTop - pinnedJump.scrollTop) <= 2) {
+        activePageIndex = pinnedJump.pageIndex;
+      } else {
+        pinnedJump = null;
+      }
+    }
 
+    const pageChanged = activeDoc.pageIndex !== activePageIndex;
     activeDoc.pageIndex = activePageIndex;
     activeDoc.scrollTop = scrollTop;
 
@@ -519,17 +528,67 @@ export function createViewportEngine({
     }
   }
 
+  function resolveInitialScrollTop(
+    offsets: readonly PageLayoutGeom[],
+    docState: MountedDocState,
+    dpr: number,
+  ): number {
+    if (
+      docState.scrollAnchor &&
+      offsets.length > 0 &&
+      Number.isInteger(docState.scrollAnchor.pageIndex) &&
+      Number.isFinite(docState.scrollAnchor.topOffsetRatio)
+    ) {
+      const anchorIndex = Math.max(
+        0,
+        Math.min(docState.scrollAnchor.pageIndex, offsets.length - 1),
+      );
+      const geom = offsets[anchorIndex];
+      if (geom) {
+        return snapToDevicePixels(
+          Math.max(
+            0,
+            geom.top + docState.scrollAnchor.topOffsetRatio * geom.height,
+          ),
+          dpr,
+        );
+      }
+    }
+    if (
+      typeof docState.scrollTop === "number" &&
+      Number.isFinite(docState.scrollTop)
+    ) {
+      return snapToDevicePixels(Math.max(0, docState.scrollTop), dpr);
+    }
+    if (offsets.length > 0) {
+      const targetIndex = Math.max(
+        0,
+        Math.min(docState.pageIndex, offsets.length - 1),
+      );
+      const geom = offsets[targetIndex];
+      if (geom) {
+        return snapToDevicePixels(Math.max(0, geom.top - TRACK_PADDING_Y), dpr);
+      }
+    }
+    return 0;
+  }
+
   function relayoutPreservingAnchor(): void {
     if (!activeDoc || pageOffsets.length === 0) {
       return;
     }
 
+    pinnedJump = null;
+    const restoringInitial = pendingInitialPositionRestore;
+    pendingInitialPositionRestore = false;
     currentDpr = getEffectiveDpr();
-    const anchor = computeScrollAnchor(
-      pageOffsets,
-      viewportEl.scrollTop,
-      getViewportHeight(),
-    );
+    const anchor = restoringInitial
+      ? null
+      : computeScrollAnchor(
+          pageOffsets,
+          viewportEl.scrollTop,
+          getViewportHeight(),
+        );
     const scale = computeEffectiveScale({
       pageDimensions: activeDoc.pageDimensions,
       pageIndex: activeDoc.pageIndex,
@@ -556,12 +615,10 @@ export function createViewportEngine({
       pageOffsets,
       activeDoc.pageDimensions,
     );
-    viewportEl.scrollTop = resolveAnchorScrollTop(
-      pageOffsets,
-      anchor,
-      currentDpr,
-    );
-    notifyViewState(true, "user");
+    viewportEl.scrollTop = anchor
+      ? resolveAnchorScrollTop(pageOffsets, anchor, currentDpr)
+      : resolveInitialScrollTop(pageOffsets, activeDoc, currentDpr);
+    notifyViewState(true, restoringInitial ? "mount" : "user");
     scheduleVisibleRenders();
   }
 
@@ -582,6 +639,8 @@ export function createViewportEngine({
       intersectionObserver = null;
     }
 
+    pinnedJump = null;
+    pendingInitialPositionRestore = false;
     bumpEpoch();
     textLayer?.clearActiveSelection();
     textLayer?.clearMounted();
@@ -673,55 +732,25 @@ export function createViewportEngine({
       intersectionObserver.observe(slot);
     }
 
-    if (
-      activeDoc.scrollAnchor &&
-      offsets.length > 0 &&
-      Number.isInteger(activeDoc.scrollAnchor.pageIndex) &&
-      Number.isFinite(activeDoc.scrollAnchor.topOffsetRatio)
-    ) {
-      const anchorIndex = Math.max(
-        0,
-        Math.min(activeDoc.scrollAnchor.pageIndex, offsets.length - 1),
-      );
-      const geom = offsets[anchorIndex];
-      if (geom) {
-        viewportEl.scrollTop = snapToDevicePixels(
-          Math.max(
-            0,
-            geom.top + activeDoc.scrollAnchor.topOffsetRatio * geom.height,
-          ),
-          currentDpr,
-        );
-      }
-    } else if (
-      typeof activeDoc.scrollTop === "number" &&
-      Number.isFinite(activeDoc.scrollTop)
-    ) {
-      viewportEl.scrollTop = snapToDevicePixels(
-        Math.max(0, activeDoc.scrollTop),
-        currentDpr,
-      );
-    } else if (offsets.length > 0) {
-      const targetIndex = Math.max(
-        0,
-        Math.min(activeDoc.pageIndex, offsets.length - 1),
-      );
-      const geom = offsets[targetIndex];
-      if (geom) {
-        viewportEl.scrollTop = snapToDevicePixels(
-          Math.max(0, geom.top - TRACK_PADDING_Y),
-          currentDpr,
-        );
-      }
-    } else {
-      viewportEl.scrollTop = 0;
-    }
-
-    viewportEl.scrollLeft = 0;
     lastViewportWidth = viewportEl.clientWidth;
     lastViewportHeight = viewportEl.clientHeight;
+    pendingInitialPositionRestore =
+      lastViewportWidth === 0 || lastViewportHeight === 0;
+    viewportEl.scrollTop = resolveInitialScrollTop(
+      offsets,
+      activeDoc,
+      currentDpr,
+    );
+    viewportEl.scrollLeft = 0;
 
-    notifyViewState(true, "mount");
+    if (pendingInitialPositionRestore) {
+      const snapshot = buildSnapshot();
+      if (snapshot) {
+        onViewStateChange(snapshot, "mount");
+      }
+    } else {
+      notifyViewState(true, "mount");
+    }
     scheduleVisibleRenders();
   }
 
@@ -734,18 +763,24 @@ export function createViewportEngine({
     if (!geom) {
       return;
     }
+    pendingInitialPositionRestore = false;
     viewportEl.scrollTop = snapToDevicePixels(
       Math.max(0, geom.top - TRACK_PADDING_Y),
       currentDpr,
     );
+    const landedScrollTop = viewportEl.scrollTop;
+    pinnedJump = { pageIndex: clamped, scrollTop: landedScrollTop };
     activeDoc.pageIndex = clamped;
-    activeDoc.scrollTop = viewportEl.scrollTop;
+    activeDoc.scrollTop = landedScrollTop;
     activeDoc.scrollAnchor = computeTabScrollAnchor(
       pageOffsets,
-      viewportEl.scrollTop,
+      landedScrollTop,
       clamped,
     );
-    notifyViewState(true, "user");
+    const snapshot = buildSnapshot();
+    if (snapshot) {
+      onViewStateChange(snapshot, "user");
+    }
     scheduleVisibleRenders();
   }
 
@@ -753,6 +788,8 @@ export function createViewportEngine({
     if (!activeDoc || pageOffsets.length === 0) {
       return;
     }
+    pinnedJump = null;
+    pendingInitialPositionRestore = false;
     if (activeDoc.zoomMode === "fit_page") {
       scrollToPage(activeDoc.pageIndex + direction);
       return;
@@ -780,6 +817,8 @@ export function createViewportEngine({
     if (!activeDoc || pageOffsets.length === 0) {
       return;
     }
+    pinnedJump = null;
+    pendingInitialPositionRestore = false;
     viewportEl.scrollTop = 0;
     notifyViewState(false, "user");
     scheduleVisibleRenders();
@@ -789,6 +828,8 @@ export function createViewportEngine({
     if (!activeDoc || pageOffsets.length === 0) {
       return;
     }
+    pinnedJump = null;
+    pendingInitialPositionRestore = false;
     viewportEl.scrollTop = Math.max(
       0,
       viewportEl.scrollHeight - viewportEl.clientHeight,
@@ -805,6 +846,8 @@ export function createViewportEngine({
     if (!activeDoc) {
       return;
     }
+    pinnedJump = null;
+    pendingInitialPositionRestore = false;
     activeDoc.zoomMode = mode;
     relayoutPreservingAnchor();
   }
@@ -813,6 +856,8 @@ export function createViewportEngine({
     if (!activeDoc) {
       return;
     }
+    pinnedJump = null;
+    pendingInitialPositionRestore = false;
     activeDoc.zoomMode = "custom";
     activeDoc.zoomScale = clampZoom(scale);
     relayoutPreservingAnchor();
@@ -976,6 +1021,15 @@ export function createViewportEngine({
           currentDpr,
         );
         applySlotHorizontalPositions(trackWidth, currentDpr);
+      }
+      if (pendingInitialPositionRestore && pageOffsets.length > 0) {
+        pendingInitialPositionRestore = false;
+        viewportEl.scrollTop = resolveInitialScrollTop(
+          pageOffsets,
+          activeDoc,
+          currentDpr,
+        );
+        notifyViewState(true, "mount");
       }
       scheduleVisibleRenders();
       return;
