@@ -255,38 +255,47 @@
 
 <style>
   .toolbar {
-    display: flex;
+    display: grid;
+    grid-template-columns: minmax(max-content, 1fr) auto minmax(
+        max-content,
+        1fr
+      );
     align-items: center;
-    justify-content: space-between;
-    gap: 8px;
+    gap: 12px;
     height: var(--toolbar-height);
     padding: 0 10px;
     background-color: var(--surface-paper);
     border-bottom: 1px solid var(--border-subtle);
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+
+  .toolbar::-webkit-scrollbar {
+    display: none;
   }
 
   .toolbar-group {
     display: flex;
     align-items: center;
     gap: 4px;
-    min-width: 0;
+    min-width: max-content;
   }
 
   .toolbar-group--left {
-    flex: 1 1 0;
     justify-content: flex-start;
   }
 
   .toolbar-group--center {
-    flex: 0 0 auto;
+    justify-self: center;
   }
 
   .toolbar-group--right {
-    flex: 1 1 0;
     justify-content: flex-end;
   }
 
   .toolbar-sep {
+    flex-shrink: 0;
     width: 1px;
     height: 16px;
     margin: 0 3px;
@@ -295,6 +304,7 @@
 
   .icon-btn,
   .toolbar-btn {
+    flex-shrink: 0;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -349,6 +359,7 @@
   }
 
   .page-control {
+    flex-shrink: 0;
     display: inline-flex;
     align-items: center;
     gap: 5px;
@@ -387,10 +398,12 @@
   .page-total {
     min-width: 24px;
     color: var(--ink-muted);
+    white-space: nowrap;
   }
 
   .zoom-control,
   .fit-control {
+    flex-shrink: 0;
     display: inline-flex;
     align-items: center;
     gap: 2px;
@@ -402,20 +415,13 @@
     font-size: 12.5px;
     font-variant-numeric: tabular-nums;
     color: var(--ink-primary);
+    white-space: nowrap;
   }
 
   @media (max-width: 740px) {
     .toolbar {
       padding: 0 6px;
-      gap: 4px;
-    }
-
-    .toolbar-group--left {
-      flex: 0 0 auto;
-    }
-
-    .toolbar-group--right {
-      flex: 0 1 auto;
+      gap: 6px;
     }
 
     .toolbar-btn-label {
