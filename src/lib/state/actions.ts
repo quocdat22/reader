@@ -80,6 +80,8 @@ export interface AppActions {
   requestZoomMode(mode: "fit_width" | "fit_page"): void;
   requestZoomStep(direction: 1 | -1): void;
   requestJumpToPage(pageIndex: number): void;
+  navigateViewport(action: "page_down" | "page_up" | "home" | "end"): void;
+  focusHomeRecentSearch(): void;
   toggleToc(): void;
   closeToc(): void;
   ensureOutlineLoaded(
@@ -1129,6 +1131,27 @@ export function createAppActions({
     store.isWindowMaximized = isMaximized;
   }
 
+  function navigateViewport(
+    action: "page_down" | "page_up" | "home" | "end",
+  ): void {
+    if (!store.activeDoc) {
+      return;
+    }
+    if (action === "page_down") {
+      hooks.viewportCommands?.scrollPageStep?.(1);
+    } else if (action === "page_up") {
+      hooks.viewportCommands?.scrollPageStep?.(-1);
+    } else if (action === "home") {
+      hooks.viewportCommands?.scrollToStart?.();
+    } else {
+      hooks.viewportCommands?.scrollToEnd?.();
+    }
+  }
+
+  function focusHomeRecentSearch(): void {
+    requestFocus("recent_search");
+  }
+
   async function flushActiveReadingState(): Promise<void> {
     const doc = store.activeDoc;
     if (doc) {
@@ -1169,6 +1192,8 @@ export function createAppActions({
     requestZoomMode,
     requestZoomStep,
     requestJumpToPage,
+    navigateViewport,
+    focusHomeRecentSearch,
     toggleToc,
     closeToc,
     ensureOutlineLoaded,
