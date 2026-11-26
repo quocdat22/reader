@@ -556,4 +556,78 @@ describe("Runes AppStore + AppActions", () => {
     expect(closedNotifications).toEqual([30]);
     expect(closedDocIds).toEqual([30]);
   });
+
+  it("Phase 4: restores viewport focus when closing focused TOC, retries failed outlines, and isolates per-tab search", async () => {
+    let outlineAttempt = 0;
+    let focusInToc = true;
+    let capturedScroll = false;
+
+    const { store, actions } = createHarness(
+      {
+        openDocument: async (path) =>
+          makeOpenResponse(path.endsWith("one.pdf") ? 41 : 42, path),
+        getOutline: async () => {
+          outlineAttempt += 1;
+          if (outlineAttempt === 1) {
+            throw new ReaderApiError("internal", "Outline unavailable");
+          }
+          return [{ title: "Recovered Chapter", page_index: 1, children: [] }];
+        },
+        searchDocument: async (docId, query) => [
+          {
+            page_index: docId === 41 ? 0 : 3,
+            rects: [
+              { x: 0.1, y: query.length * 0.01, width: 0.2, height: 0.02 },
+            ],
+          },
+        ],
+      },
+      {
+        isFocusInToc: () => focusInToc,
+        captureTocScroll: (doc) => {
+          doc.outline.scrollTop = 64;
+          capturedScroll = true;
+        },
+      },
+    );
+    cleanups.push(() => actions.dispose());
+
+    await actions.openPath("/virtual/one.pdf");
+    actions.toggleToc();
+    await vi.waitFor(() => {
+      expect(store.activeDoc?.outline.status).toBe("error");
+    });
+
+    await actions.ensureOutlineLoaded(41, { force: true });
+    expect(store.activeDoc?.outline.status).toBe("loaded");
+    expect(store.activeDoc?.outline.model?.roots[0]?.title).toBe(
+      "Recovered Chapter",
+    );
+
+    const prevFocusSeq = store.focusRequest?.seq ?? 0;
+    actions.closeToc();
+    expect(capturedScroll).toBe(true);
+    expect(store.activeDoc?.outline.open).toBe(false);
+    expect(store.focusRequest?.target).toBe("viewport");
+    expect((store.focusRequest?.seq ?? 0) > prevFocusSeq).toBe(true);
+
+    focusInToc = false;
+    actions.openSearch();
+    actions.setSearchQuery("alpha");
+    await vi.advanceTimersByTimeAsync(200);
+    await vi.waitFor(() => {
+      expect(store.activeDoc?.search.status).toBe("ready");
+    });
+
+    await actions.openPath("/virtual/two.pdf");
+    expect(store.activeDoc?.documentId).toBe(42);
+    expect(store.activeDoc?.search.open).toBe(false);
+    expect(store.activeDoc?.search.query).toBe("");
+    expect(store.activeDoc?.search.matches).toEqual([]);
+
+    await actions.selectTab("doc-41");
+    expect(store.activeDoc?.search.open).toBe(true);
+    expect(store.activeDoc?.search.query).toBe("alpha");
+    expect(store.activeDoc?.search.matches).toHaveLength(1);
+  });
 });

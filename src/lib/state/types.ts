@@ -123,6 +123,7 @@ export interface ViewportCommandBridge {
 export interface TransitionHooks {
   cancelPageInput?: () => void;
   captureTocScroll?: (doc: DocState) => void;
+  isFocusInToc?: () => boolean;
   captureViewportSnapshot?: (doc: DocState) => ViewportSnapshot | null;
   onDocumentClosed?: (documentId: number) => void;
   viewportCommands?: ViewportCommandBridge;

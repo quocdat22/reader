@@ -2,7 +2,9 @@
   import DropOverlay from "./components/DropOverlay.svelte";
   import HomeScreen from "./components/HomeScreen.svelte";
   import NoticeBanner from "./components/NoticeBanner.svelte";
+  import SearchBar from "./components/SearchBar.svelte";
   import TabStrip from "./components/TabStrip.svelte";
+  import TocDrawer from "./components/TocDrawer.svelte";
   import Toolbar from "./components/Toolbar.svelte";
   import ViewportHost from "./components/ViewportHost.svelte";
   import { installShortcutRouter } from "./lib/engines/shortcuts";
@@ -23,6 +25,8 @@
   let { store, actions, api, scopes, hooks }: Props = $props();
   const windowControls = $derived(api.getWindowControls());
   let viewportEl = $state<HTMLElement | null>(null);
+  let tocDrawerEl = $state<HTMLElement | null>(null);
+  let searchBarEl = $state<HTMLElement | null>(null);
 
   $effect(() => {
     document.title = store.windowTitle;
@@ -50,8 +54,14 @@
       store,
       actions,
       getViewportEl: () => viewportEl,
-      isInsideToc: () => false,
-      isInsideSearch: () => false,
+      isInsideToc: (target) =>
+        Boolean(
+          tocDrawerEl && target instanceof Node && tocDrawerEl.contains(target),
+        ),
+      isInsideSearch: (target) =>
+        Boolean(
+          searchBarEl && target instanceof Node && searchBarEl.contains(target),
+        ),
     });
 
     void api
@@ -104,6 +114,14 @@
       class="reader-shell"
       hidden={store.shellMode !== "document"}
     >
+      <TocDrawer
+        {store}
+        {actions}
+        {hooks}
+        onDrawerElement={(el) => {
+          tocDrawerEl = el;
+        }}
+      />
       <ViewportHost
         {store}
         {actions}
@@ -113,7 +131,15 @@
         onViewportElement={(el) => {
           viewportEl = el;
         }}
-      />
+      >
+        <SearchBar
+          {store}
+          {actions}
+          onBarElement={(el) => {
+            searchBarEl = el;
+          }}
+        />
+      </ViewportHost>
     </div>
   </main>
 

@@ -784,9 +784,16 @@ export function createAppActions({
     if (!doc) {
       return;
     }
-    doc.outline.open = !doc.outline.open;
+    const closing = doc.outline.open;
+    const wasFocusedInToc = closing && (hooks.isFocusInToc?.() ?? false);
+    if (closing) {
+      hooks.captureTocScroll?.(doc);
+    }
+    doc.outline.open = !closing;
     if (doc.outline.open && doc.outline.status === "idle") {
       void ensureOutlineLoaded(doc.documentId);
+    } else if (!doc.outline.open && wasFocusedInToc) {
+      requestFocus("viewport");
     }
   }
 
@@ -795,7 +802,12 @@ export function createAppActions({
     if (!doc || !doc.outline.open) {
       return;
     }
+    const wasFocusedInToc = hooks.isFocusInToc?.() ?? false;
+    hooks.captureTocScroll?.(doc);
     doc.outline.open = false;
+    if (wasFocusedInToc) {
+      requestFocus("viewport");
+    }
   }
 
   function setTocNodeExpanded(

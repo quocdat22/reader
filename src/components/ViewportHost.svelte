@@ -33,6 +33,8 @@
   let viewportEl = $state<HTMLDivElement | null>(null);
   let trackEl = $state<HTMLDivElement | null>(null);
   let viewportEngine = $state<ViewportEngine | null>(null);
+  let lastMatchedDocId: number | null = null;
+  let lastMatchScrollSeq = 0;
 
   $effect(() => {
     onViewportElement?.(viewportEl);
@@ -122,6 +124,50 @@
     const req = store.focusRequest;
     if (req?.target === "viewport" && store.activeDoc && viewportEngine) {
       viewportEngine.focus();
+    }
+  });
+
+  // Repaint search hit overlays whenever active tab, search visibility, or highlightVersion changes.
+  $effect(() => {
+    const doc = store.activeDoc;
+    const engine = viewportEngine;
+    if (!engine) {
+      return;
+    }
+    if (!doc) {
+      engine.syncSearchHighlights(null);
+      return;
+    }
+    void doc.search.highlightVersion;
+    void doc.search.open;
+    engine.syncSearchHighlights(doc.search);
+  });
+
+  // Scroll to active match only when scrollToMatchSeq advances within the same mounted document.
+  $effect(() => {
+    const doc = store.activeDoc;
+    const engine = viewportEngine;
+    if (!engine || !doc) {
+      lastMatchedDocId = null;
+      lastMatchScrollSeq = 0;
+      return;
+    }
+
+    const docId = doc.documentId;
+    const seq = doc.search.scrollToMatchSeq;
+    if (docId !== lastMatchedDocId) {
+      lastMatchedDocId = docId;
+      lastMatchScrollSeq = seq;
+      return;
+    }
+    if (seq > lastMatchScrollSeq && seq > 0) {
+      lastMatchScrollSeq = seq;
+      untrack(() => {
+        const match = doc.search.matches[doc.search.currentIndex];
+        if (match) {
+          engine.scrollToNormalizedRect(match.page_index, match.rects[0]);
+        }
+      });
     }
   });
 </script>
