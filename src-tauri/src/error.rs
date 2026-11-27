@@ -43,6 +43,10 @@ pub enum ReaderError {
     #[error("unsupported or invalid URI: {0}")]
     UnsupportedUri(String),
 
+    /// Highlight payload, fingerprint, or identifier failed validation.
+    #[error("invalid highlight data: {0}")]
+    InvalidHighlight(String),
+
     /// Unexpected internal backend or concurrency error.
     #[error("internal error: {0}")]
     Internal(String),
@@ -70,6 +74,7 @@ impl ReaderError {
             Self::DocumentNotFound(_) => "document_not_found",
             Self::Cancelled => "cancelled",
             Self::UnsupportedUri(_) => "unsupported_uri",
+            Self::InvalidHighlight(_) => "invalid_highlight",
             Self::Internal(_) => "internal",
         }
     }
@@ -128,6 +133,10 @@ mod tests {
         assert_eq!(
             ReaderError::UnsupportedUri("bad".into()).code(),
             "unsupported_uri"
+        );
+        assert_eq!(
+            ReaderError::InvalidHighlight("bad highlight".into()).code(),
+            "invalid_highlight"
         );
         assert_eq!(ReaderError::Internal("boom".into()).code(), "internal");
     }

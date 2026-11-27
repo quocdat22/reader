@@ -5,6 +5,7 @@ pub mod commands;
 pub mod covers;
 pub mod error;
 pub mod external;
+pub mod highlights;
 pub mod state;
 pub mod worker;
 
