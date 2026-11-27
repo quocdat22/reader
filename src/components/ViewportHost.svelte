@@ -1,5 +1,6 @@
 <script lang="ts">
   import { untrack, type Snippet } from "svelte";
+  import { createHighlightLayerEngine } from "../lib/engines/highlight-layer";
   import { createLinkLayerEngine } from "../lib/engines/link-layer";
   import { createTextLayerEngine } from "../lib/engines/text-layer";
   import {
@@ -57,12 +58,35 @@
         void actions.activatePageLink(documentId, link);
       },
     });
+    const highlightLayer = createHighlightLayerEngine({
+      viewportEl,
+      getHighlighterMode: () => store.highlighterMode,
+      isLinkAtPoint: (clientX, clientY) =>
+        linkLayer.hasLinkAtClientPoint(clientX, clientY),
+      extractSelection: (slotElements) =>
+        textLayer.extractSelectionSegments(slotElements),
+      clearActiveSelection: () => textLayer.clearActiveSelection(),
+      onCreateFromSelection: (documentId, segments, quote) => {
+        void actions.createHighlightFromSelection(documentId, segments, quote);
+      },
+      onSelectHighlight: (documentId, highlightId, anchorRect) => {
+        actions.openHighlightPopover({
+          documentId,
+          highlightId,
+          anchorRect,
+        });
+      },
+      onDismissPopover: () => {
+        actions.closeHighlightPopover();
+      },
+    });
     const viewport = createViewportEngine({
       viewportEl,
       trackEl,
       api,
       textLayer,
       linkLayer,
+      highlightLayer,
       onViewStateChange: (snapshot, reason) => {
         actions.applyViewportSnapshot(snapshot.documentId, snapshot, reason);
       },
@@ -70,6 +94,7 @@
 
     viewportEngine = viewport;
     hooks.captureViewportSnapshot = () => viewport.captureSnapshot();
+    hooks.clearTextSelection = () => textLayer.clearActiveSelection();
     hooks.onDocumentClosed = (documentId: number) => {
       textLayer.evictDocument(documentId);
       linkLayer.evictDocument(documentId);
@@ -90,9 +115,11 @@
         delete hooks.viewportCommands;
       }
       delete hooks.captureViewportSnapshot;
+      delete hooks.clearTextSelection;
       delete hooks.onDocumentClosed;
       viewportEngine = null;
       viewport.destroy();
+      highlightLayer.destroy();
       linkLayer.destroy();
       textLayer.destroy();
     };
@@ -124,6 +151,7 @@
         zoomMode: doc.view.zoomMode,
         zoomScale: doc.view.zoomScale,
         search: doc.search,
+        highlightsByPage: doc.highlights.byPage,
         signal: scopes.getSignal(doc.documentId),
       });
     });
@@ -154,6 +182,21 @@
     void doc.search.highlightVersion;
     void doc.search.open;
     engine.syncSearchHighlights(doc.search);
+  });
+
+  // Repaint user highlight overlays whenever active tab or highlight data version changes.
+  $effect(() => {
+    const doc = store.activeDoc;
+    const engine = viewportEngine;
+    if (!engine) {
+      return;
+    }
+    if (!doc) {
+      engine.syncUserHighlights(null);
+      return;
+    }
+    void doc.highlights.version;
+    engine.syncUserHighlights(doc.highlights.byPage);
   });
 
   // Scroll to active match only when scrollToMatchSeq advances within the same mounted document.
@@ -192,6 +235,7 @@
   <div
     id="viewport"
     class="viewport"
+    class:viewport--highlighter-mode={store.highlighterMode}
     tabindex="0"
     aria-label="Document pages"
     bind:this={viewportEl}

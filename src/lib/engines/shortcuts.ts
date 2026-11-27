@@ -127,6 +127,12 @@ export function installShortcutRouter({
         actions.closeSearch({ focusViewport: true });
         return;
       }
+      if (store.activeDoc && store.highlighterMode) {
+        event.preventDefault();
+        actions.setHighlighterMode(false);
+        handleEscapeFocus();
+        return;
+      }
       if (inEditable || isInsideToc(target) || store.hasAnyTabs) {
         handleEscapeFocus();
       }
@@ -236,6 +242,14 @@ export function installShortcutRouter({
         return;
       }
 
+      if (event.shiftKey && lower === "h") {
+        if (store.activeDoc) {
+          event.preventDefault();
+          actions.toggleHighlighterMode();
+        }
+        return;
+      }
+
       if (!event.shiftKey) {
         const digit = getShortcutDigit(event);
         if (digit !== null && store.hasAnyTabs) {
@@ -269,6 +283,24 @@ export function installShortcutRouter({
 
     if (event.shiftKey || !store.activeDoc || isInsideToc(target)) {
       return;
+    }
+
+    if (store.highlighterMode) {
+      if (event.key === "1") {
+        event.preventDefault();
+        actions.setActiveHighlightColor("yellow");
+        return;
+      }
+      if (event.key === "2") {
+        event.preventDefault();
+        actions.setActiveHighlightColor("green");
+        return;
+      }
+      if (event.key === "3") {
+        event.preventDefault();
+        actions.setActiveHighlightColor("pink");
+        return;
+      }
     }
 
     if (event.key === "PageDown") {

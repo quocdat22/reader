@@ -1457,7 +1457,10 @@ export function createAppActions({
 
   function clearActiveTextSelection(): void {
     hooks.clearTextSelection?.();
-    if (typeof window !== "undefined") {
+    if (
+      typeof window !== "undefined" &&
+      typeof window.getSelection === "function"
+    ) {
       window.getSelection()?.removeAllRanges();
     }
   }

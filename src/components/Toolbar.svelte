@@ -1,5 +1,7 @@
 <script lang="ts">
+  import { HIGHLIGHT_COLORS } from "../lib/domain/highlights";
   import { MAX_ZOOM, MIN_ZOOM } from "../lib/domain/zoom";
+  import type { HighlightColor } from "../lib/ipc/types";
   import type { AppActions } from "../lib/state/actions";
   import type { AppStore } from "../lib/state/app-store.svelte";
   import type { TransitionHooks } from "../lib/state/types";
@@ -7,10 +9,17 @@
   import FitPageIcon from "./icons/FitPageIcon.svelte";
   import FitWidthIcon from "./icons/FitWidthIcon.svelte";
   import FolderIcon from "./icons/FolderIcon.svelte";
+  import HighlighterIcon from "./icons/HighlighterIcon.svelte";
   import MinusIcon from "./icons/MinusIcon.svelte";
   import PlusIcon from "./icons/PlusIcon.svelte";
   import SearchIcon from "./icons/SearchIcon.svelte";
   import TocIcon from "./icons/TocIcon.svelte";
+
+  const HIGHLIGHT_COLOR_LABELS: Record<HighlightColor, string> = {
+    yellow: "Yellow",
+    green: "Green",
+    pink: "Pink",
+  };
 
   interface Props {
     store: AppStore;
@@ -252,6 +261,43 @@
     <span class="toolbar-sep" aria-hidden="true"></span>
 
     <button
+      id="highlight-mode-btn"
+      class="icon-btn highlight-mode-btn"
+      type="button"
+      title="Highlighter mode (Ctrl+Shift+H)"
+      aria-label="Highlighter mode"
+      aria-pressed={Boolean(toolbarModel?.highlighterMode)}
+      onclick={() => actions.toggleHighlighterMode()}
+    >
+      <HighlighterIcon color={toolbarModel?.activeHighlightColor ?? "yellow"} />
+    </button>
+
+    {#if toolbarModel?.highlighterMode}
+      <div
+        id="highlight-color-picker"
+        class="highlight-color-picker"
+        role="radiogroup"
+        aria-label="Highlight color"
+      >
+        {#each HIGHLIGHT_COLORS as color, index (color)}
+          {@const label = HIGHLIGHT_COLOR_LABELS[color]}
+          <button
+            class={`swatch-btn swatch-btn--${color}`}
+            type="button"
+            role="radio"
+            aria-checked={toolbarModel.activeHighlightColor === color}
+            title={`${label} (${index + 1})`}
+            aria-label={`${label} highlight`}
+            onclick={() => actions.setActiveHighlightColor(color)}
+          >
+            <span class={`swatch-dot swatch-dot--${color}`} aria-hidden="true"
+            ></span>
+          </button>
+        {/each}
+      </div>
+    {/if}
+
+    <button
       id="search-toggle-btn"
       class="icon-btn"
       type="button"
@@ -382,6 +428,72 @@
   .toolbar-btn--open {
     color: var(--ink-primary);
     padding: 0 8px;
+  }
+
+  .highlight-color-picker {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    height: 26px;
+    padding: 0 3px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    background-color: var(--surface-chrome);
+  }
+
+  .swatch-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    cursor: pointer;
+    transition: background-color 120ms ease;
+  }
+
+  .swatch-btn:hover {
+    background-color: var(--hover-subtle);
+  }
+
+  .swatch-btn:focus-visible {
+    outline-offset: -1px;
+  }
+
+  .swatch-dot {
+    display: block;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: 1px solid transparent;
+    transition:
+      transform 90ms ease,
+      box-shadow 90ms ease;
+  }
+
+  .swatch-dot--yellow {
+    background-color: var(--hl-yellow-swatch);
+    border-color: var(--hl-yellow-swatch-border);
+  }
+
+  .swatch-dot--green {
+    background-color: var(--hl-green-swatch);
+    border-color: var(--hl-green-swatch-border);
+  }
+
+  .swatch-dot--pink {
+    background-color: var(--hl-pink-swatch);
+    border-color: var(--hl-pink-swatch-border);
+  }
+
+  .swatch-btn[aria-checked="true"] .swatch-dot {
+    box-shadow:
+      0 0 0 1.5px var(--surface-paper),
+      0 0 0 3px var(--ink-primary);
   }
 
   .page-control {
