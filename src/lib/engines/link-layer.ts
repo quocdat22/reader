@@ -26,6 +26,7 @@ export interface LinkLayerEngineOptions {
 export interface LinkLayerEngine {
   syncVisibleRange(params: LinkLayerSyncParams): void;
   evictOutside(keepMin: number, keepMax: number): void;
+  hasLinkAtClientPoint(clientX: number, clientY: number): boolean;
   clearMounted(): void;
   evictDocument(documentId: number): void;
   destroy(): void;
@@ -561,6 +562,10 @@ export function createLinkLayerEngine({
     }
   }
 
+  function hasLinkAtClientPoint(clientX: number, clientY: number): boolean {
+    return resolveHitAtClientPoint(clientX, clientY) !== null;
+  }
+
   function handlePointerDown(event: PointerEvent): void {
     if (destroyed || event.button !== 0) {
       return;
@@ -682,6 +687,7 @@ export function createLinkLayerEngine({
   return {
     syncVisibleRange,
     evictOutside,
+    hasLinkAtClientPoint,
     clearMounted,
     evictDocument,
     destroy,

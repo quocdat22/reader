@@ -1,3 +1,4 @@
+import type { PageHighlightEntry } from "../domain/highlights";
 import type { PageSearchEntry } from "../domain/search";
 import { clampZoom } from "../domain/zoom";
 import type { ReaderApi } from "../ipc/client";
@@ -47,6 +48,10 @@ export interface ViewportMountInput {
   readonly zoomMode: ZoomMode;
   readonly zoomScale: number;
   readonly search?: ViewportSearchInput | null;
+  readonly highlightsByPage?: ReadonlyMap<
+    number,
+    readonly PageHighlightEntry[]
+  > | null;
   readonly signal?: AbortSignal | null;
 }
 
@@ -91,12 +96,32 @@ export interface LinkLayerViewportBridge {
   clearMounted(): void;
 }
 
+export interface HighlightLayerViewportBridge {
+  syncVisibleRange(params: {
+    documentId: number;
+    renderMin: number;
+    renderMax: number;
+    slotElements: readonly HTMLDivElement[];
+    pageOffsets: readonly PageLayoutGeom[];
+    highlightsByPage?: ReadonlyMap<
+      number,
+      readonly PageHighlightEntry[]
+    > | null;
+  }): void;
+  syncHighlights(
+    byPage: ReadonlyMap<number, readonly PageHighlightEntry[]> | null,
+  ): void;
+  evictOutside(keepMin: number, keepMax: number): void;
+  clearMounted(): void;
+}
+
 export interface ViewportEngineOptions {
   readonly viewportEl: HTMLElement;
   readonly trackEl: HTMLElement;
   readonly api: Pick<ReaderApi, "renderPage">;
   readonly textLayer?: TextLayerViewportBridge;
   readonly linkLayer?: LinkLayerViewportBridge;
+  readonly highlightLayer?: HighlightLayerViewportBridge;
   readonly onViewStateChange: (
     snapshot: ViewportSnapshot,
     reason: "mount" | "user",
@@ -111,6 +136,10 @@ export interface ViewportEngine {
   scrollToAnchor(target: ViewportAnchorTarget): void;
   scrollToNormalizedRect(pageIndex: number, rect?: NormalizedRect | null): void;
   syncSearchHighlights(search: ViewportSearchInput | null): void;
+  syncUserHighlights(
+    byPage: ReadonlyMap<number, readonly PageHighlightEntry[]> | null,
+  ): void;
+  getSlotElements(): readonly HTMLDivElement[];
   scrollPageStep(direction: 1 | -1): void;
   scrollToStart(): void;
   scrollToEnd(): void;
@@ -157,10 +186,15 @@ export function createViewportEngine({
   api,
   textLayer,
   linkLayer,
+  highlightLayer,
   onViewStateChange,
 }: ViewportEngineOptions): ViewportEngine {
   let activeDoc: MountedDocState | null = null;
   let currentSearch: ViewportSearchInput | null = null;
+  let currentHighlights: ReadonlyMap<
+    number,
+    readonly PageHighlightEntry[]
+  > | null = null;
   let pageOffsets: PageLayoutGeom[] = [];
   let slotElements: HTMLDivElement[] = [];
   const renderedCanvases = new Map<number, RenderedCanvasEntry>();
@@ -355,6 +389,7 @@ export function createViewportEngine({
 
     textLayer?.evictOutside(keepMin, keepMax, slotElements);
     linkLayer?.evictOutside(keepMin, keepMax);
+    highlightLayer?.evictOutside(keepMin, keepMax);
   }
 
   function drainRenderQueue(): void {
@@ -473,6 +508,14 @@ export function createViewportEngine({
     );
 
     syncSearchLayersForRange(renderMin, renderMax);
+    highlightLayer?.syncVisibleRange({
+      documentId: activeDoc.documentId,
+      renderMin,
+      renderMax,
+      slotElements,
+      pageOffsets,
+      highlightsByPage: currentHighlights,
+    });
     textLayer?.syncVisibleRange({
       documentId: activeDoc.documentId,
       pageDimensions: activeDoc.pageDimensions,
@@ -680,6 +723,7 @@ export function createViewportEngine({
     textLayer?.clearActiveSelection();
     textLayer?.clearMounted();
     linkLayer?.clearMounted();
+    highlightLayer?.clearMounted();
     clearAllSearchLayers();
     releaseAllCanvases();
     slotElements = [];
@@ -687,6 +731,7 @@ export function createViewportEngine({
     currentMaxPageWidth = 0;
     currentTrackHeight = 0;
     currentSearch = null;
+    currentHighlights = null;
     trackEl.textContent = "";
     trackEl.style.height = "0px";
     trackEl.style.width = "100%";
@@ -710,6 +755,7 @@ export function createViewportEngine({
       zoomScale: input.zoomScale,
     };
     currentSearch = input.search ?? null;
+    currentHighlights = input.highlightsByPage ?? null;
     currentDpr = getEffectiveDpr();
 
     const scale = computeEffectiveScale({
@@ -1003,6 +1049,17 @@ export function createViewportEngine({
     syncSearchLayersForRange(renderMin, renderMax);
   }
 
+  function syncUserHighlights(
+    byPage: ReadonlyMap<number, readonly PageHighlightEntry[]> | null,
+  ): void {
+    currentHighlights = byPage;
+    highlightLayer?.syncHighlights(byPage);
+  }
+
+  function getSlotElements(): readonly HTMLDivElement[] {
+    return slotElements;
+  }
+
   function scrollToNormalizedRect(
     pageIndex: number,
     rect?: NormalizedRect | null,
@@ -1223,6 +1280,8 @@ export function createViewportEngine({
     scrollToAnchor,
     scrollToNormalizedRect,
     syncSearchHighlights,
+    syncUserHighlights,
+    getSlotElements,
     scrollPageStep,
     scrollToStart,
     scrollToEnd,

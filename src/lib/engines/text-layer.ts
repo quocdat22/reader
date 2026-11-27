@@ -1,5 +1,11 @@
+import { normalizeHighlightSegments } from "../domain/highlights";
 import type { ReaderApi } from "../ipc/client";
-import type { NormalizedRect, PageDimensions, TextSpan } from "../ipc/types";
+import type {
+  HighlightSegment,
+  NormalizedRect,
+  PageDimensions,
+  TextSpan,
+} from "../ipc/types";
 import { formatCopiedFragments, type CopiedTextFragment } from "./text-copy";
 import { PT_TO_CSS_PX, type PageLayoutGeom } from "./viewport-math";
 
@@ -24,6 +30,11 @@ export interface TextLayerEngineOptions {
   readonly api: Pick<ReaderApi, "getPageText">;
 }
 
+export interface ExtractedSelection {
+  readonly segments: HighlightSegment[];
+  readonly quote: string;
+}
+
 export interface TextLayerEngine {
   syncVisibleRange(params: TextLayerSyncParams): void;
   evictOutside(
@@ -36,6 +47,9 @@ export interface TextLayerEngine {
     pageOffsets: readonly PageLayoutGeom[],
     pageDimensions: readonly PageDimensions[],
   ): void;
+  extractSelectionSegments(
+    slotElements: readonly HTMLDivElement[],
+  ): ExtractedSelection | null;
   clearActiveSelection(): void;
   clearMounted(): void;
   evictDocument(documentId: number): void;
@@ -461,6 +475,149 @@ export function createTextLayerEngine({
     }
   }
 
+  function collectSelectedSpanFragments(
+    selection: Selection,
+    onSpanPiece: (meta: SpanMeta, piece: string, subRange: Range) => void,
+  ): void {
+    const startToStart =
+      typeof Range !== "undefined" ? Range.START_TO_START : 0;
+    const endToEnd = typeof Range !== "undefined" ? Range.END_TO_END : 2;
+    const subRange = document.createRange();
+    const sortedLayers = Array.from(mountedLayers.entries()).sort(
+      (a, b) => a[0] - b[0],
+    );
+
+    for (let r = 0; r < selection.rangeCount; r += 1) {
+      const range = selection.getRangeAt(r);
+
+      for (const [, layerEl] of sortedLayers) {
+        if (!range.intersectsNode(layerEl)) {
+          continue;
+        }
+        const spans =
+          typeof layerEl.querySelectorAll === "function"
+            ? layerEl.querySelectorAll<HTMLElement>(".text-span")
+            : (Array.from(layerEl.children) as HTMLElement[]);
+        for (const spanEl of spans) {
+          if (!range.intersectsNode(spanEl)) {
+            continue;
+          }
+          const meta = spanMetaByEl.get(spanEl);
+          if (!meta) {
+            continue;
+          }
+
+          subRange.selectNodeContents(spanEl);
+          if (range.compareBoundaryPoints(startToStart, subRange) > 0) {
+            subRange.setStart(range.startContainer, range.startOffset);
+          }
+          if (range.compareBoundaryPoints(endToEnd, subRange) < 0) {
+            subRange.setEnd(range.endContainer, range.endOffset);
+          }
+
+          const piece = subRange.toString();
+          if (piece.length > 0) {
+            onSpanPiece(meta, piece, subRange);
+          }
+        }
+      }
+    }
+
+    if (typeof subRange.detach === "function") {
+      subRange.detach();
+    }
+  }
+
+  function extractSelectionSegments(
+    slotElements: readonly HTMLDivElement[],
+  ): ExtractedSelection | null {
+    if (
+      typeof window === "undefined" ||
+      typeof window.getSelection !== "function"
+    ) {
+      return null;
+    }
+
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+      return null;
+    }
+    if (!selectionInsideViewport(selection, viewportEl)) {
+      return null;
+    }
+
+    const copiedFragments: CopiedTextFragment[] = [];
+    const rawRectsByPage = new Map<number, NormalizedRect[]>();
+
+    collectSelectedSpanFragments(selection, (meta, piece, subRange) => {
+      copiedFragments.push({
+        pageIndex: meta.pageIndex,
+        text: piece,
+        rect: meta.rect,
+      });
+
+      if (piece.trim().length === 0) {
+        return;
+      }
+
+      const slotEl = slotElements[meta.pageIndex];
+      if (!slotEl || typeof slotEl.getBoundingClientRect !== "function") {
+        return;
+      }
+      const slotRect = slotEl.getBoundingClientRect();
+      if (slotRect.width <= 0) {
+        return;
+      }
+
+      if (typeof subRange.getBoundingClientRect !== "function") {
+        return;
+      }
+      const rangeRect = subRange.getBoundingClientRect();
+      const rawX0 = (rangeRect.left - slotRect.left) / slotRect.width;
+      const rawX1 = (rangeRect.right - slotRect.left) / slotRect.width;
+      if (!Number.isFinite(rawX0) || !Number.isFinite(rawX1)) {
+        return;
+      }
+
+      const minSpanX = meta.rect.x;
+      const maxSpanX = meta.rect.x + meta.rect.width;
+      const x0 = Math.max(minSpanX, Math.min(maxSpanX, rawX0));
+      const x1 = Math.max(minSpanX, Math.min(maxSpanX, rawX1));
+      const width = x1 - x0;
+      if (width <= 0) {
+        return;
+      }
+
+      let rects = rawRectsByPage.get(meta.pageIndex);
+      if (!rects) {
+        rects = [];
+        rawRectsByPage.set(meta.pageIndex, rects);
+      }
+      // Keep exact PDFium vertical span bounds so fallback UI font metrics never jitter highlight height.
+      rects.push({
+        x: x0,
+        y: meta.rect.y,
+        width,
+        height: meta.rect.height,
+      });
+    });
+
+    const rawSegments: HighlightSegment[] = [];
+    for (const [pageIndex, rects] of rawRectsByPage.entries()) {
+      rawSegments.push({ page_index: pageIndex, rects });
+    }
+
+    const segments = normalizeHighlightSegments(rawSegments);
+    if (segments.length === 0) {
+      return null;
+    }
+
+    return {
+      segments,
+      quote: formatCopiedFragments(copiedFragments),
+    };
+  }
+
   function handleCopy(event: ClipboardEvent): void {
     const activeEl = document.activeElement;
     if (
@@ -479,51 +636,13 @@ export function createTextLayerEngine({
     }
 
     const fragments: CopiedTextFragment[] = [];
-    const subRange = document.createRange();
-    const sortedLayers = Array.from(mountedLayers.entries()).sort(
-      (a, b) => a[0] - b[0],
-    );
-
-    for (let r = 0; r < selection.rangeCount; r += 1) {
-      const range = selection.getRangeAt(r);
-
-      for (const [, layerEl] of sortedLayers) {
-        if (!range.intersectsNode(layerEl)) {
-          continue;
-        }
-        const spans = layerEl.querySelectorAll<HTMLElement>(".text-span");
-        for (const spanEl of spans) {
-          if (!range.intersectsNode(spanEl)) {
-            continue;
-          }
-          const meta = spanMetaByEl.get(spanEl);
-          if (!meta) {
-            continue;
-          }
-
-          subRange.selectNodeContents(spanEl);
-          if (range.compareBoundaryPoints(Range.START_TO_START, subRange) > 0) {
-            subRange.setStart(range.startContainer, range.startOffset);
-          }
-          if (range.compareBoundaryPoints(Range.END_TO_END, subRange) < 0) {
-            subRange.setEnd(range.endContainer, range.endOffset);
-          }
-
-          const piece = subRange.toString();
-          if (piece.length > 0) {
-            fragments.push({
-              pageIndex: meta.pageIndex,
-              text: piece,
-              rect: meta.rect,
-            });
-          }
-        }
-      }
-    }
-
-    if (typeof subRange.detach === "function") {
-      subRange.detach();
-    }
+    collectSelectedSpanFragments(selection, (meta, piece) => {
+      fragments.push({
+        pageIndex: meta.pageIndex,
+        text: piece,
+        rect: meta.rect,
+      });
+    });
 
     const formatted = formatCopiedFragments(fragments);
     if (formatted.length === 0) {
@@ -552,6 +671,7 @@ export function createTextLayerEngine({
     syncVisibleRange,
     evictOutside,
     rescaleMounted,
+    extractSelectionSegments,
     clearActiveSelection,
     clearMounted,
     evictDocument,

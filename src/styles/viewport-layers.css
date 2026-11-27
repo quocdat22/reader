@@ -35,10 +35,62 @@
   user-select: none;
 }
 
-.search-layer {
+.highlight-layer {
   position: absolute;
   inset: 0;
   z-index: 2;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+  mix-blend-mode: multiply;
+}
+
+.pdf-highlight-group {
+  pointer-events: none;
+}
+
+.pdf-highlight-rect {
+  position: absolute;
+  border-radius: 2px;
+  pointer-events: none;
+  transition: background-color 90ms ease;
+}
+
+.pdf-highlight-rect--yellow {
+  background-color: var(--hl-yellow-bg);
+}
+
+.pdf-highlight-rect--green {
+  background-color: var(--hl-green-bg);
+}
+
+.pdf-highlight-rect--pink {
+  background-color: var(--hl-pink-bg);
+}
+
+.pdf-highlight-group--hover .pdf-highlight-rect--yellow,
+.pdf-highlight-group--selected .pdf-highlight-rect--yellow {
+  background-color: var(--hl-yellow-hover-bg);
+}
+
+.pdf-highlight-group--hover .pdf-highlight-rect--green,
+.pdf-highlight-group--selected .pdf-highlight-rect--green {
+  background-color: var(--hl-green-hover-bg);
+}
+
+.pdf-highlight-group--hover .pdf-highlight-rect--pink,
+.pdf-highlight-group--selected .pdf-highlight-rect--pink {
+  background-color: var(--hl-pink-hover-bg);
+}
+
+.pdf-highlight-group--selected .pdf-highlight-rect {
+  outline: 1px solid rgba(26, 31, 43, 0.24);
+}
+
+.search-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
   pointer-events: none;
   user-select: none;
   mix-blend-mode: multiply;
@@ -59,7 +111,7 @@
   position: absolute;
   top: 0;
   left: 0;
-  z-index: 3;
+  z-index: 5;
   overflow: hidden;
   transform-origin: 0 0;
   pointer-events: none;
@@ -87,7 +139,7 @@
 .link-layer {
   position: absolute;
   inset: 0;
-  z-index: 3;
+  z-index: 4;
   overflow: hidden;
   pointer-events: none;
   user-select: none;
@@ -126,6 +178,15 @@
 .pdf-link-group:focus-within .pdf-link-rect {
   background-color: rgba(30, 77, 183, 0.08);
   border-bottom-color: rgba(30, 77, 183, 0.38);
+}
+
+.viewport--highlighter-mode .text-span {
+  cursor: text;
+}
+
+.viewport--highlight-hover,
+.viewport--highlight-hover .text-span {
+  cursor: pointer;
 }
 
 .viewport--link-hover,

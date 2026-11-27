@@ -312,6 +312,27 @@ describe("createLinkLayerEngine", () => {
     expect(onActivateLink).toHaveBeenCalledTimes(1);
     expect(onActivateLink).toHaveBeenCalledWith(1, sampleLinks[0]);
 
+    // Exposes synchronous cached link presence check for highlight-layer coordination.
+    expect(engine.hasLinkAtClientPoint(100 + 0.6 * 600, 20 + 0.12 * 800)).toBe(
+      true,
+    );
+    expect(engine.hasLinkAtClientPoint(100 + 0.2 * 600, 20 + 0.18 * 800)).toBe(
+      true,
+    );
+    expect(engine.hasLinkAtClientPoint(100 + 0.85 * 600, 20 + 0.85 * 800)).toBe(
+      false,
+    );
+
+    engine.evictOutside(1, 1);
+    expect(engine.hasLinkAtClientPoint(100 + 0.6 * 600, 20 + 0.12 * 800)).toBe(
+      true,
+    ); // Cached page links remain queryable via peek cache while pageOffsets exist.
+
+    engine.clearMounted();
+    expect(engine.hasLinkAtClientPoint(100 + 0.6 * 600, 20 + 0.12 * 800)).toBe(
+      false,
+    );
+
     engine.destroy();
   });
 });

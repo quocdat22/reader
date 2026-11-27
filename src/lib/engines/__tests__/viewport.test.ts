@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { groupHighlightsByPage } from "../../domain/highlights";
 import type { PageDimensions } from "../../ipc/types";
 import type { ViewportSnapshot } from "../../state/types";
 import { createViewportEngine } from "../viewport";
@@ -515,6 +516,98 @@ describe("createViewportEngine scroll & page jump behavior", () => {
     const clearCallsBeforeUnmount = clearMounted.mock.calls.length;
     engine.unmount();
     expect(clearMounted).toHaveBeenCalledTimes(clearCallsBeforeUnmount + 1);
+
+    engine.destroy();
+  });
+
+  it("forwards highlightLayer lifecycle and syncUserHighlights updates", () => {
+    const harness = createViewportHarness(600, 720);
+    const syncVisibleRange = vi.fn();
+    const syncHighlights = vi.fn();
+    const evictOutside = vi.fn();
+    const clearMounted = vi.fn();
+    const renderPage = vi.fn(
+      async ({ widthPx, heightPx }: { widthPx: number; heightPx: number }) =>
+        ({
+          width: widthPx,
+          height: heightPx,
+          data: new Uint8ClampedArray(widthPx * heightPx * 4),
+        }) as unknown as ImageData,
+    );
+
+    const engine = createViewportEngine({
+      viewportEl: harness.viewportEl,
+      trackEl: harness.trackEl,
+      api: { renderPage },
+      highlightLayer: {
+        syncVisibleRange,
+        syncHighlights,
+        evictOutside,
+        clearMounted,
+      },
+      onViewStateChange: () => {},
+    });
+
+    const initialByPage = groupHighlightsByPage([
+      {
+        id: "hl-init",
+        color: "yellow",
+        segments: [
+          {
+            page_index: 0,
+            rects: [{ x: 0.1, y: 0.1, width: 0.3, height: 0.02 }],
+          },
+        ],
+        quote: "Init",
+        created_at_unix: 100,
+        updated_at_unix: 100,
+      },
+    ]);
+
+    engine.mountDocument({
+      documentId: 9,
+      pageDimensions: Array.from({ length: 10 }, () => LETTER_PAGE),
+      pageIndex: 0,
+      scrollTop: null,
+      scrollAnchor: null,
+      zoomMode: "fit_width",
+      zoomScale: 1.0,
+      highlightsByPage: initialByPage,
+    });
+
+    expect(engine.getSlotElements()).toHaveLength(10);
+    expect(syncVisibleRange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        documentId: 9,
+        highlightsByPage: initialByPage,
+      }),
+    );
+
+    const updatedByPage = groupHighlightsByPage([
+      {
+        id: "hl-updated",
+        color: "green",
+        segments: [
+          {
+            page_index: 0,
+            rects: [{ x: 0.2, y: 0.2, width: 0.4, height: 0.02 }],
+          },
+        ],
+        quote: "Updated",
+        created_at_unix: 200,
+        updated_at_unix: 200,
+      },
+    ]);
+    engine.syncUserHighlights(updatedByPage);
+    expect(syncHighlights).toHaveBeenCalledWith(updatedByPage);
+
+    engine.scrollToPage(9);
+    expect(evictOutside).toHaveBeenCalled();
+
+    const clearBefore = clearMounted.mock.calls.length;
+    engine.unmount();
+    expect(clearMounted).toHaveBeenCalledTimes(clearBefore + 1);
+    expect(engine.getSlotElements()).toEqual([]);
 
     engine.destroy();
   });
