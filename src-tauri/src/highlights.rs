@@ -991,6 +991,35 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::permissions_set_readonly_false,
+        reason = "clear Windows read-only attribute so TempDirGuard cleans up the temporary test file"
+    )]
+    fn compute_document_fingerprint_succeeds_on_readonly_file() {
+        let dir = TempDirGuard::new("readonly-fp");
+        let file_path = dir.path.join("readonly.pdf");
+        fs::write(&file_path, b"%PDF-1.7\nread-only fixture bytes").expect("write test file");
+
+        let mut perms = fs::metadata(&file_path)
+            .expect("read initial metadata")
+            .permissions();
+        perms.set_readonly(true);
+        fs::set_permissions(&file_path, perms).expect("mark readonly");
+
+        let fp_result = compute_document_fingerprint(&file_path);
+
+        // Clear read-only attribute before TempDirGuard cleanup on Windows.
+        let mut reset_perms = fs::metadata(&file_path)
+            .expect("read readonly metadata")
+            .permissions();
+        reset_perms.set_readonly(false);
+        fs::set_permissions(&file_path, reset_perms).expect("restore writable");
+
+        let fp = fp_result.expect("readonly file should fingerprint cleanly");
+        assert!(is_valid_fingerprint(&fp));
+    }
+
+    #[test]
     fn compute_document_fingerprint_returns_io_for_missing_and_unsupported_for_directory() {
         let dir = TempDirGuard::new("errors");
         let missing = dir.path.join("missing.pdf");

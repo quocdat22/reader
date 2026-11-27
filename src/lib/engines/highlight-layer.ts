@@ -100,6 +100,7 @@ export function createHighlightLayerEngine({
   let hoveredHighlightId: string | null = null;
   let selectedHighlightId: string | null = null;
   let pointerDown: PointerDownState | null = null;
+  let pointerUpHandled = false;
   let suppressNextClick = false;
   let destroyed = false;
 
@@ -372,6 +373,7 @@ export function createHighlightLayerEngine({
     clearHover();
     setSelectedHighlightId(null);
     pointerDown = null;
+    pointerUpHandled = false;
     suppressNextClick = false;
     for (const pageIndex of Array.from(mountedLayers.keys())) {
       removePageLayer(pageIndex);
@@ -511,6 +513,7 @@ export function createHighlightLayerEngine({
     if (destroyed || event.button !== 0) {
       return;
     }
+    pointerUpHandled = false;
     suppressNextClick = false;
     pointerDown = {
       x: event.clientX,
@@ -555,6 +558,7 @@ export function createHighlightLayerEngine({
     if (destroyed || event.button !== 0) {
       return;
     }
+    pointerUpHandled = true;
     if (
       currentDocId === null ||
       !getHighlighterMode() ||
@@ -571,6 +575,28 @@ export function createHighlightLayerEngine({
     suppressNextClick = true;
     clearActiveSelection();
     onCreateFromSelection(currentDocId, extracted.segments, extracted.quote);
+  }
+
+  function handleWindowPointerUp(event: PointerEvent): void {
+    if (destroyed || event.button !== 0 || pointerDown === null) {
+      return;
+    }
+    if (pointerUpHandled) {
+      pointerUpHandled = false;
+      return;
+    }
+    // Capture selection release even when the pointer exits `#viewport` mid-drag.
+    pointerDown = null;
+    suppressNextClick = false;
+    handlePointerUp(event);
+    pointerUpHandled = false;
+  }
+
+  function handleWindowPointerCancel(): void {
+    pointerDown = null;
+    pointerUpHandled = false;
+    suppressNextClick = false;
+    clearHover();
   }
 
   function handlePointerLeave(): void {
@@ -624,6 +650,11 @@ export function createHighlightLayerEngine({
   }
 
   const hasDomListeners = typeof viewportEl.addEventListener === "function";
+  const hasWindowListeners =
+    hasDomListeners &&
+    typeof window !== "undefined" &&
+    typeof window.addEventListener === "function" &&
+    typeof window.removeEventListener === "function";
   if (hasDomListeners) {
     viewportEl.addEventListener("pointerdown", handlePointerDown);
     viewportEl.addEventListener("pointermove", handlePointerMove);
@@ -633,6 +664,10 @@ export function createHighlightLayerEngine({
       passive: true,
     });
     viewportEl.addEventListener("click", handleClick);
+  }
+  if (hasWindowListeners) {
+    window.addEventListener("pointerup", handleWindowPointerUp);
+    window.addEventListener("pointercancel", handleWindowPointerCancel);
   }
 
   function destroy(): void {
@@ -650,6 +685,10 @@ export function createHighlightLayerEngine({
       viewportEl.removeEventListener("pointerleave", handlePointerLeave);
       viewportEl.removeEventListener("scroll", handleViewportScroll);
       viewportEl.removeEventListener("click", handleClick);
+    }
+    if (hasWindowListeners) {
+      window.removeEventListener("pointerup", handleWindowPointerUp);
+      window.removeEventListener("pointercancel", handleWindowPointerCancel);
     }
     clearMounted();
   }

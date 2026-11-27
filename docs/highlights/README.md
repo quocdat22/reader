@@ -1,7 +1,7 @@
 # CR-010: Minimalist On-Page Text Highlights
 
 - **ID**: `CR-010`
-- **Status**: Proposed
+- **Status**: Implemented
 - **Scope**: Rust content fingerprinting, atomic per-document highlight store, and 4 highlight CRUD IPC commands (`src-tauri/src/highlights.rs`, `src-tauri/src/state.rs`, `src-tauri/src/worker.rs`, `src-tauri/src/commands.rs`, `src-tauri/src/lib.rs`, `src-tauri/src/error.rs`); Svelte 5 frontend typed IPC, highlight geometry/overlap domain, Runes store/actions, imperative highlight rendering & selection extraction engines, Toolbar Highlighter Mode controls, on-page edit popover, and keyboard shortcuts (`src/lib/ipc/{types,client}.ts`, `src/lib/domain/{highlights,format-error}.ts`, `src/lib/state/{types,app-store.svelte,actions}.ts`, `src/lib/engines/{text-layer,highlight-layer,link-layer,viewport,shortcuts}.ts`, `src/components/{Toolbar,ViewportHost,HighlightPopover,icons/HighlighterIcon,icons/CopyIcon,icons/TrashIcon}.svelte`, `src/styles/{tokens,viewport-layers}.css`). **Zero new Cargo crates, zero new npm packages, zero modifications to source PDF files, zero changes to `state.json` schema (`version: 1`), and zero changes to CSP policy.**
 - **Supersedes / Amends**: [docs/SPEC.md](../SPEC.md) (§1 Non-Goals, §3 Backend, §4 IPC Contract, §5 Aesthetic Direction / Frontend Module Structure / Keyboard Shortcuts), [docs/PHASES.md](../PHASES.md) (Phases 2–6), and [AGENTS.md](../../AGENTS.md) (scope discipline & repository map — updated at Phase 5 closure).
 

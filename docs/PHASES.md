@@ -76,6 +76,8 @@ Execute phases sequentially. Complete every item in a phase's **Exit Gate** befo
 > **Amended by [CR-004](changes/004-paginated-unbounded-recents.md#3-persistence-behavior)**: `PersistedState` no longer caps `recent_files` at 10 entries; unit tests verify unbounded retention beyond 10 entries.
 >
 > **Amended by [CR-009](changes/009-clickable-pdf-links.md#4-ipc-commands--wire-dtos)**: Adds `get_page_links` and `open_external_url` IPC commands plus `external.rs` URL scheme validation.
+>
+> **Amended by [CR-010](highlights/phases/phase-1-ipc-domain-and-runes-state.md)**: `AppState` manages per-document `HighlightStore` persistence alongside `get_highlights`, `create_highlight`, `update_highlight_color`, `delete_highlight`, and `OpenDocumentResponse.document_fingerprint`.
 
 ---
 
@@ -120,6 +122,8 @@ Execute phases sequentially. Complete every item in a phase's **Exit Gate** befo
 > **Amended by [CR-007](frontend-svelte5/phases/phase-3-shell-home-and-reading-viewport.md)**: UI shell, tab strip (`src/lib/engines/tab-drag.ts`), home screen (including CR-006 recent search), toolbar, and virtualized viewport (`src/lib/engines/viewport.ts`) were migrated to Svelte 5 components and TypeScript engines.
 >
 > **Amended by [CR-008](changes/008-recent-cover-previews.md#5-verification-checklist)**: Recent rows in `src/components/RecentFiles.svelte` display proportional first-page cover thumbnails loaded lazily via `src/lib/engines/recent-covers.ts` and `get_recent_cover`.
+>
+> **Amended by [CR-010](highlights/phases/phase-3-toolbar-highlighter-mode-and-shortcuts.md)**: `Toolbar.svelte` adds Highlighter Mode toggle + active inline 3-color swatches, and `ViewportHost.svelte` wires `highlight-layer.ts` into the viewport.
 
 ---
 
@@ -141,6 +145,8 @@ Execute phases sequentially. Complete every item in a phase's **Exit Gate** befo
 > **Amended by [CR-007](frontend-svelte5/phases/phase-4-toc-search-and-shortcuts.md)**: TOC outline drawer (`src/components/TocDrawer.svelte`, `src/components/TocTree.svelte`), chapter state, and global keyboard shortcut routing (`src/lib/engines/shortcuts.ts`) were migrated to Svelte 5 and TypeScript.
 >
 > **Amended by [CR-009](changes/009-clickable-pdf-links.md#5-frontend-link-layer--navigation-history)**: Adds per-tab Back/Forward navigation history (`Toolbar` buttons, `Alt+ArrowLeft`/`Alt+ArrowRight`, and mouse buttons `3`/`4`).
+>
+> **Amended by [CR-010](highlights/phases/phase-4-highlight-popover-and-interactions.md)**: Adds `Ctrl+Shift+H`, mode-scoped `1`/`2`/`3`, popover-scoped `Delete`/`Backspace`, and 5-step `Esc` precedence to `src/lib/engines/shortcuts.ts`.
 
 ---
 
@@ -167,6 +173,8 @@ Execute phases sequentially. Complete every item in a phase's **Exit Gate** befo
 > **Amended by [CR-007](frontend-svelte5/phases/phase-4-toc-search-and-shortcuts.md)**: Text layer (`src/lib/engines/text-layer.ts`), search bar (`src/components/SearchBar.svelte`), and highlight geometry helpers were migrated to Svelte 5 and TypeScript.
 >
 > **Amended by [CR-009](changes/009-clickable-pdf-links.md#5-frontend-link-layer--navigation-history)**: Adds `src/lib/engines/link-layer.ts` alongside `text-layer.ts` for clickable PDF links without obstructing text drag-selection.
+>
+> **Amended by [CR-010](highlights/phases/phase-2-highlight-and-selection-engines.md)**: Adds `text-layer.ts` `extractSelectionSegments`, imperative `highlight-layer.ts`, and `HighlightPopover.svelte` above PDF `/Link` overlays (`link-layer.ts` retaining click/hover priority).
 
 ---
 
@@ -195,3 +203,5 @@ Execute phases sequentially. Complete every item in a phase's **Exit Gate** befo
 > **Amended by [CR-005](changes/005-pdfium-render-engine.md#6-verification-checklist)**: Phase 6 release verification confirms `cargo tauri build` bundles `pdfium.dll` and `PDFIUM-LICENSE.txt` and launches cleanly outside the dev tree.
 >
 > **Amended by [CR-007](frontend-svelte5/phases/phase-5-cleanup-hardening-and-release.md)**: Frontend verification includes `pnpm verify`, legacy `src/*.js` / `src/styles.css` removal, zero inline script/style CSP compliance in `dist/index.html`, and `cargo tauri build` (`beforeBuildCommand: "pnpm build"`, `frontendDist: "../dist"`).
+>
+> **Amended by [CR-010](highlights/phases/phase-5-hardening-doc-closure-and-release.md)**: Release verification includes highlight geometry/persistence hardening, zero Rust/npm dependency additions, strict `dist/index.html` CSP inspection, and `CR-010` governance closure.

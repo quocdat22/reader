@@ -34,6 +34,8 @@ Concise architectural, interface, and visual specification for `reader` (`com.ro
 > **Amended by [CR-007](frontend-svelte5/README.md)**: While the runtime remains dependency-minimal with zero CSS frameworks, the frontend architecture moved from vanilla HTML/JS to **Vite + TypeScript + Svelte 5 (Runes)** managed with **pnpm** and compiled into static ES modules under `dist/` (`withGlobalTauri: false`). See [CR-007 Architecture](frontend-svelte5/ARCHITECTURE.md).
 >
 > **Amended by [CR-009](changes/009-clickable-pdf-links.md#3-pdf-link-extraction--security)**: Standard clickable PDF `/Link` annotations (internal destinations and allowlisted `http`/`https`/`mailto` external URIs) and per-tab navigation history are now implemented post-v1.
+>
+> **Amended by [CR-010](highlights/ARCHITECTURE.md#1-content-fingerprinting--on-disk-persistence-src-taurisrchighlightsrs)**: Minimalist on-page 3-color text highlights stored per document in app data (`<app_data_dir>/highlights/<fingerprint>.json`) are now implemented post-v1; highlight notes, highlight drawers, undo/redo, markup shapes, form filling, and source PDF modification remain out of scope.
 
 ---
 
@@ -87,6 +89,9 @@ src-tauri/src/
     mod.rs         DocumentBackend trait + core DTOs (NormalizedRect, OutlineItem, ...)
     pdf.rs         PdfBackend (statically linked MuPDF)
 ```
+
+> [!NOTE]
+> **Amended by [CR-010](highlights/ARCHITECTURE.md#1-content-fingerprinting--on-disk-persistence-src-taurisrchighlightsrs)**: Adds `src-tauri/src/highlights.rs` (`compute_document_fingerprint` pure-Rust `SHA-256` fingerprinting and atomic `HighlightStore` integrated into `AppState` and `OpenedDocument`) plus `ReaderError::InvalidHighlight`.
 
 ### Lightweight `DocumentBackend` Trait Boundary
 Keep the trait focused on fixed-page reading operations needed in v1 without speculative abstractions:
@@ -169,6 +174,8 @@ All commands are invoked via `window.__TAURI__.core.invoke`.
 > **Amended by [CR-008](changes/008-recent-cover-previews.md#3-cover-render-ipc--disk-cache)**: Adds `get_recent_cover` (`{ path: String, max_side_px?: u32 } -> tauri::ipc::Response`) returning `[width: u32 LE][height: u32 LE][RGBA8]` cover thumbnails backed by `<app_data_dir>/covers/` disk caching.
 >
 > **Amended by [CR-009](changes/009-clickable-pdf-links.md#4-ipc-commands--wire-dtos)**: Adds `get_page_links` (`{ document_id: u64, page_index: usize } -> Vec<PageLink>`) and `open_external_url` (`{ url: String } -> ()`).
+>
+> **Amended by [CR-010](highlights/ARCHITECTURE.md#2-rust-backend--tauri-ipc-contract)**: Extends `OpenDocumentResponse` with `document_fingerprint` and adds `get_highlights`, `create_highlight`, `update_highlight_color`, and `delete_highlight`.
 
 ### Binary `render_page` Wire Format
 - Bytes `0..4`: `width_px` as unsigned 32-bit little-endian (`u32::to_le_bytes`).
@@ -220,6 +227,8 @@ Apply `.agents/skills/frontend-design/SKILL.md` (two-pass design plan + self-cri
 > **Amended by [CR-003](changes/003-tab-strip-reorder.md#3-reordering-behavior--visual-feedback)**: Tabs in `#tab-list` support horizontal pointer drag-and-drop reordering with live sibling displacement and overflow edge auto-scroll.
 >
 > **Amended by [CR-009](changes/009-clickable-pdf-links.md#5-frontend-link-layer--navigation-history)**: The document toolbar adds compact `Back` and `Forward` navigation buttons after `#toc-toggle-btn`, and pages host a visually silent `.link-layer` overlay.
+>
+> **Amended by [CR-010](highlights/ARCHITECTURE.md#6-visual-design-tokens-toolbar-controls-popover--keyboard-precedence)**: Adds a compact `26×26px` Highlighter Mode toggle button (expanding inline 3 color swatches when active) in `Toolbar.svelte` and the floating `#highlight-popover` (`[Yellow | Green | Pink | Copy | Delete]`) anchored inside `.viewport-host`.
 
 ### Core Layout Wireframe
 
@@ -273,6 +282,8 @@ src/
 
 > [!NOTE]
 > **Amended by [CR-007](frontend-svelte5/README.md)**: The vanilla `src/*.js` and `src/styles.css` modules listed above were replaced at CR-007 Phase 5 by TypeScript/Svelte 5 modules under `src/main.ts`, `src/App.svelte`, `src/components/`, `src/lib/{domain,engines,ipc,state}/`, and `src/styles/`. See [CR-007 Architecture](frontend-svelte5/ARCHITECTURE.md) for the live module tree.
+>
+> **Amended by [CR-010](highlights/PHASES.md#3-complete-file-creation--modification-map)**: Adds `src/lib/domain/highlights.ts`, `src/lib/engines/highlight-layer.ts`, `src/components/HighlightPopover.svelte`, and icon components under `src/components/icons/` while retaining framework-free engine isolation.
 
 ### Virtualized Viewport & Tab Memory Rules
 - Keep **only the active tab** mounted in the virtualized viewport DOM; on tab switch, snapshot the outgoing tab's scroll/page/zoom/search state, release its `<canvas>` backing stores (`canvas.width = 0; canvas.height = 0`), bump the render epoch, and mount the target tab immediately from its cached `page_dimensions`.
@@ -306,6 +317,8 @@ src/
 > **Amended by [CR-006](changes/006-home-recent-search.md#4-filtering--keyboard-rules)**: `Ctrl+F` focuses the Home recent-files search input when Home displays recent history; `Esc` clears a non-empty filter before blurring.
 >
 > **Amended by [CR-009](changes/009-clickable-pdf-links.md#5-frontend-link-layer--navigation-history)**: Adds `Alt+ArrowLeft` / `Alt+ArrowRight` (and mouse buttons `3` / `4`) for per-tab Back/Forward history, plus `Tab` / `Enter` on focusable page links.
+>
+> **Amended by [CR-010](highlights/ARCHITECTURE.md#64-keyboard-shortcuts-srclibenginesshortcutsts)**: Adds `Ctrl+Shift+H` to toggle Highlighter Mode, unmodified `1`/`2`/`3` to switch active color while in Highlighter Mode, unmodified `Delete`/`Backspace` to remove an inspected highlight while `#highlight-popover` is open, and `Esc` precedence (closing popover before search bar and Highlighter Mode).
 
 ---
 

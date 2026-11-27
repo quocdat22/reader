@@ -623,6 +623,89 @@ describe("createHighlightLayerEngine", () => {
 
     engine.destroy();
   });
+
+  it("captures Highlighter Mode selection on window pointerup when releasing outside viewport", () => {
+    const windowListeners = new Map<string, Set<(event: unknown) => void>>();
+    (globalThis as unknown as { window: unknown }).window = {
+      getSelection: () => mockSelection,
+      addEventListener(type: string, listener: (event: unknown) => void) {
+        let set = windowListeners.get(type);
+        if (!set) {
+          set = new Set();
+          windowListeners.set(type, set);
+        }
+        set.add(listener);
+      },
+      removeEventListener(type: string, listener: (event: unknown) => void) {
+        windowListeners.get(type)?.delete(listener);
+      },
+    };
+
+    const viewportNode = createMockNode("div");
+    viewportNode.rect = makeRect(0, 0, 800, 1000);
+    const slot0 = createMockNode("div");
+    slot0.rect = makeRect(100, 20, 600, 800);
+    viewportNode.appendChild(slot0);
+
+    const extractedSegments = [
+      { page_index: 0, rects: [{ x: 0.1, y: 0.2, width: 0.3, height: 0.02 }] },
+    ];
+    const clearActiveSelection = vi.fn();
+    const onCreateFromSelection = vi.fn();
+
+    const engine = createHighlightLayerEngine({
+      viewportEl: viewportNode as unknown as HTMLElement,
+      getHighlighterMode: () => true,
+      isLinkAtPoint: () => false,
+      extractSelection: () => ({
+        segments: extractedSegments,
+        quote: "Edge drag quote",
+      }),
+      clearActiveSelection,
+      onCreateFromSelection,
+      onSelectHighlight: () => {},
+      onDismissPopover: () => {},
+    });
+
+    engine.syncVisibleRange({
+      documentId: 9,
+      renderMin: 0,
+      renderMax: 0,
+      slotElements: [slot0 as unknown as HTMLDivElement],
+      pageOffsets: [
+        { top: 20, width: 600, height: 800, widthPx: 600, heightPx: 800 },
+      ],
+      highlightsByPage: groupHighlightsByPage([]),
+    });
+
+    mockSelection = {
+      isCollapsed: false,
+      rangeCount: 1,
+      toString: () => "Edge drag quote",
+      getRangeAt: () => ({ commonAncestorContainer: slot0 }),
+      removeAllRanges: vi.fn(),
+    };
+
+    viewportNode.dispatch("pointerdown", {
+      button: 0,
+      clientX: 150,
+      clientY: 200,
+    });
+    for (const listener of windowListeners.get("pointerup") ?? []) {
+      listener({ button: 0, clientX: 850, clientY: 10 });
+    }
+
+    expect(clearActiveSelection).toHaveBeenCalledTimes(1);
+    expect(onCreateFromSelection).toHaveBeenCalledWith(
+      9,
+      extractedSegments,
+      "Edge drag quote",
+    );
+
+    engine.destroy();
+    expect(windowListeners.get("pointerup")?.size ?? 0).toBe(0);
+    expect(windowListeners.get("pointercancel")?.size ?? 0).toBe(0);
+  });
 });
 
 describe("text-layer extractSelectionSegments", () => {
