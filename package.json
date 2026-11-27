@@ -1,6 +1,6 @@
 {
   "name": "reader",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -14,7 +14,8 @@
     "format:check": "prettier --check .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm check && pnpm test && pnpm build"
+    "version:check": "node scripts/check-version.mjs",
+    "verify": "pnpm version:check && pnpm format:check && pnpm lint && pnpm typecheck && pnpm check && pnpm test && pnpm build"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.5",

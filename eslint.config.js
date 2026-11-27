@@ -24,7 +24,7 @@ export default defineConfig(
     },
   },
   {
-    files: ["*.config.{js,ts}", "svelte.config.js"],
+    files: ["*.config.{js,ts}", "svelte.config.js", "scripts/**/*.{js,mjs}"],
     languageOptions: {
       globals: {
         ...globals.node,
