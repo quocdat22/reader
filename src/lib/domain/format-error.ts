@@ -81,3 +81,45 @@ export function formatLinkError(err: unknown): string {
         : "";
   return rawMsg.trim().length > 0 ? rawMsg : "Could not open external link.";
 }
+
+export type HighlightErrorAction =
+  "load" | "create" | "recolor" | "delete" | "copy";
+
+/**
+ * Formats a highlight persistence or clipboard error into plain sentence-case copy.
+ */
+export function formatHighlightError(
+  err: unknown,
+  action: HighlightErrorAction,
+): string {
+  if (action === "copy") {
+    return "Could not copy highlighted text to the clipboard.";
+  }
+
+  const code =
+    isRecord(err) && typeof err.code === "string" ? err.code : "internal";
+
+  if (code === "invalid_highlight") {
+    if (action === "recolor" || action === "delete") {
+      return "Highlight could not be updated because its data is no longer valid.";
+    }
+    return "Could not save highlight — the selected text geometry is invalid.";
+  }
+
+  if (code === "io") {
+    return action === "load"
+      ? "Could not read saved highlights from disk."
+      : "Could not write highlight changes to disk.";
+  }
+
+  switch (action) {
+    case "load":
+      return "Could not load saved highlights for this document.";
+    case "create":
+      return "Could not save highlight.";
+    case "recolor":
+      return "Could not change highlight color.";
+    case "delete":
+      return "Could not delete highlight.";
+  }
+}

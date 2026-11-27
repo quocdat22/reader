@@ -13,6 +13,7 @@ export type ErrorCode =
   | "document_not_found"
   | "cancelled"
   | "unsupported_uri"
+  | "invalid_highlight"
   | "internal";
 
 export interface ErrorResponse {
@@ -54,6 +55,7 @@ export interface PersistedState {
 export interface OpenDocumentResponse {
   readonly document_id: number;
   readonly canonical_path: string;
+  readonly document_fingerprint: string;
   readonly metadata: DocumentMetadata;
   readonly page_dimensions: PageDimensions[];
   readonly saved_position: ReadingPosition | null;
@@ -103,4 +105,20 @@ export type LinkTarget =
 export interface PageLink {
   readonly rects: NormalizedRect[];
   readonly target: LinkTarget;
+}
+
+export type HighlightColor = "yellow" | "green" | "pink";
+
+export interface HighlightSegment {
+  readonly page_index: number;
+  readonly rects: NormalizedRect[];
+}
+
+export interface HighlightRecord {
+  readonly id: string;
+  readonly color: HighlightColor;
+  readonly segments: HighlightSegment[];
+  readonly quote: string;
+  readonly created_at_unix: number;
+  readonly updated_at_unix: number;
 }

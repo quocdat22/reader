@@ -5,13 +5,14 @@ use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
 use crate::covers;
 use crate::error::ReaderError;
+use crate::highlights::HighlightStore;
 use crate::worker::{DocumentWorker, canonicalize_document_path};
 
 /// Current schema version for `<app_data_dir>/state.json`.
@@ -327,6 +328,7 @@ pub struct AppState {
     worker: DocumentWorker,
     state_path: PathBuf,
     cover_cache_dir: PathBuf,
+    highlights: Arc<HighlightStore>,
     persisted: Mutex<PersistedState>,
     initial_file: Mutex<Option<PathBuf>>,
 }
@@ -340,16 +342,18 @@ impl AppState {
     pub fn new(state_path: PathBuf, initial_file: Option<PathBuf>) -> Result<Self, ReaderError> {
         let worker = DocumentWorker::spawn()?;
         let persisted = PersistedState::load_or_default(&state_path);
-        let cover_cache_dir = state_path
+        let base_dir = state_path
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
-            .unwrap_or_else(|| Path::new("."))
-            .join("covers");
+            .unwrap_or_else(|| Path::new("."));
+        let cover_cache_dir = base_dir.join("covers");
+        let highlights = Arc::new(HighlightStore::new(base_dir.join("highlights")));
 
         Ok(Self {
             worker,
             state_path,
             cover_cache_dir,
+            highlights,
             persisted: Mutex::new(persisted),
             initial_file: Mutex::new(initial_file),
         })
@@ -365,6 +369,12 @@ impl AppState {
     #[must_use]
     pub fn cover_cache_dir(&self) -> &Path {
         &self.cover_cache_dir
+    }
+
+    /// Returns a shared handle to the per-document [`HighlightStore`].
+    #[must_use]
+    pub fn highlight_store(&self) -> Arc<HighlightStore> {
+        Arc::clone(&self.highlights)
     }
 
     /// Consumes and returns the startup CLI / OS "Open With" file path once.
@@ -840,5 +850,55 @@ mod tests {
             .expect("remove recent entry");
         assert_eq!(updated.recent_files, []);
         assert!(!cache_file.exists());
+    }
+
+    #[test]
+    fn remove_recent_file_preserves_document_highlight_files() {
+        use crate::backend::NormalizedRect;
+        use crate::highlights::{
+            CreateHighlightInput, HighlightColor, HighlightSegment, compute_document_fingerprint,
+        };
+
+        let dir = TempDirGuard::new("remove-preserves-highlights");
+        let pdf_path = dir.path.join("notes.pdf");
+        fs::write(&pdf_path, b"%PDF-1.4 highlight preservation check").expect("write dummy pdf");
+
+        let app_state = AppState::new(dir.state_file(), None).expect("create AppState");
+        let canonical = canonicalize_document_path(&pdf_path).expect("canonicalize dummy pdf");
+        let fingerprint =
+            compute_document_fingerprint(&canonical).expect("compute pdf fingerprint");
+        let _ = app_state.record_document_open(&canonical, Some("Notes"), 2);
+
+        app_state
+            .highlight_store()
+            .create(CreateHighlightInput {
+                fingerprint: fingerprint.clone(),
+                last_known_path: Some(canonical.to_string_lossy().into_owned()),
+                id: "keep-highlight".to_owned(),
+                color: HighlightColor::Yellow,
+                segments: vec![HighlightSegment {
+                    page_index: 0,
+                    rects: vec![NormalizedRect {
+                        x: 0.1,
+                        y: 0.2,
+                        width: 0.3,
+                        height: 0.02,
+                    }],
+                }],
+                quote: "Preserved quote".to_owned(),
+            })
+            .expect("create highlight");
+
+        let key = canonical.to_string_lossy();
+        let _ = app_state
+            .remove_recent_file(&key)
+            .expect("remove recent entry");
+
+        let stored = app_state
+            .highlight_store()
+            .get(&fingerprint)
+            .expect("load highlights after remove_recent_file");
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].id, "keep-highlight");
     }
 }

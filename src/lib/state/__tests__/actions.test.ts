@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReaderApi, SaveReadingStateParams } from "../../ipc/client";
 import { ReaderApiError } from "../../ipc/errors";
 import type {
+  HighlightRecord,
   OpenDocumentResponse,
   OutlineItem,
   PersistedState,
@@ -40,6 +41,7 @@ function makeOpenResponse(
   return {
     document_id: documentId,
     canonical_path: path,
+    document_fingerprint: `${String(documentId).padStart(64, "0")}`,
     metadata: {
       title: `Doc ${documentId}`,
       author: null,
@@ -99,6 +101,29 @@ function createFakeApi(overrides: Partial<ReaderApi> = {}) {
     getRecentCover: async () => {
       throw new ReaderApiError("internal", "Not implemented in state tests");
     },
+    getHighlights: async () => [],
+    createHighlight: async (params) => ({
+      id: params.id,
+      color: params.color,
+      segments: [...params.segments],
+      quote: params.quote,
+      created_at_unix: 1_764_240_000,
+      updated_at_unix: 1_764_240_000,
+    }),
+    updateHighlightColor: async (_fingerprint, id, color) => ({
+      id,
+      color,
+      segments: [
+        {
+          page_index: 0,
+          rects: [{ x: 0.1, y: 0.1, width: 0.2, height: 0.02 }],
+        },
+      ],
+      quote: "Updated",
+      created_at_unix: 1_764_240_000,
+      updated_at_unix: 1_764_240_010,
+    }),
+    deleteHighlight: async () => true,
     pickPdfFiles: async () => [],
     subscribeDragDrop: async () => () => {},
     getWindowControls: () => ({
@@ -803,5 +828,373 @@ describe("Runes AppStore + AppActions", () => {
     pendingExternal.reject(new ReaderApiError("io", "failed"));
     await inflightExternal;
     expect(store.banner).toBeNull();
+  });
+
+  it("auto-loads document highlights on open and ignores late responses after tab close", async () => {
+    const deferred = createDeferred<HighlightRecord[]>();
+    const { store, actions } = createHarness({
+      openDocument: async (path) => makeOpenResponse(50, path),
+      getHighlights: () => deferred.promise,
+    });
+    cleanups.push(() => actions.dispose());
+
+    await actions.openPath("/virtual/hl-load.pdf");
+    expect(store.activeDoc?.highlights.status).toBe("loading");
+
+    const record: HighlightRecord = {
+      id: "hl-loaded",
+      color: "yellow",
+      segments: [
+        {
+          page_index: 0,
+          rects: [{ x: 0.1, y: 0.2, width: 0.3, height: 0.02 }],
+        },
+      ],
+      quote: "Loaded passage",
+      created_at_unix: 100,
+      updated_at_unix: 100,
+    };
+    deferred.resolve([record]);
+    await vi.waitFor(() => {
+      expect(store.activeDoc?.highlights.status).toBe("loaded");
+    });
+    expect(store.activeDoc?.highlights.items).toEqual([record]);
+    expect(store.activeDoc?.highlights.byPage.get(0)?.[0]?.highlightId).toBe(
+      "hl-loaded",
+    );
+
+    // Late resolution after tab close does not resurrect or throw.
+    const lateDeferred = createDeferred<HighlightRecord[]>();
+    const { store: s2, actions: a2 } = createHarness({
+      openDocument: async (path) => makeOpenResponse(51, path),
+      getHighlights: () => lateDeferred.promise,
+    });
+    cleanups.push(() => a2.dispose());
+
+    await a2.openPath("/virtual/hl-close-mid-load.pdf");
+    await a2.closeTab("doc-51");
+    lateDeferred.resolve([record]);
+    await Promise.resolve();
+    expect(s2.docsById.has(51)).toBe(false);
+  });
+
+  it("creates single/cross-page highlights, deduplicates near-identical selections, and syncs tabs sharing fingerprint", async () => {
+    const sharedFingerprint = "c".repeat(64);
+    const createdCalls: string[] = [];
+    const recoloredCalls: string[] = [];
+    let clearedSelections = 0;
+
+    const { store, actions } = createHarness(
+      {
+        openDocument: async (path) => {
+          const id = path.endsWith("copy-a.pdf") ? 61 : 62;
+          return makeOpenResponse(id, path, {
+            document_fingerprint: sharedFingerprint,
+          });
+        },
+        createHighlight: async (params) => {
+          createdCalls.push(params.id);
+          return {
+            id: params.id,
+            color: params.color,
+            segments: [...params.segments],
+            quote: params.quote,
+            created_at_unix: 500,
+            updated_at_unix: 500,
+          };
+        },
+        updateHighlightColor: async (_fp, id, color) => {
+          recoloredCalls.push(`${id}:${color}`);
+          return {
+            id,
+            color,
+            segments: [
+              {
+                page_index: 0,
+                rects: [{ x: 0.1, y: 0.2, width: 0.4, height: 0.02 }],
+              },
+              {
+                page_index: 1,
+                rects: [{ x: 0.1, y: 0.1, width: 0.2, height: 0.02 }],
+              },
+            ],
+            quote: "Cross-page quote",
+            created_at_unix: 500,
+            updated_at_unix: 600,
+          };
+        },
+      },
+      {
+        clearTextSelection: () => {
+          clearedSelections += 1;
+        },
+      },
+    );
+    cleanups.push(() => actions.dispose());
+
+    await actions.openPath("/folder-a/copy-a.pdf");
+    await actions.openPath("/folder-b/copy-b.pdf");
+    await vi.waitFor(() => {
+      expect(store.docsById.get(61)?.highlights.status).toBe("loaded");
+      expect(store.docsById.get(62)?.highlights.status).toBe("loaded");
+    });
+
+    actions.toggleHighlighterMode();
+    expect(store.highlighterMode).toBe(true);
+    expect(store.toolbarModel?.highlighterMode).toBe(true);
+    expect(clearedSelections).toBe(1);
+
+    const created = await actions.createHighlightFromSelection(
+      62,
+      [
+        {
+          page_index: 1,
+          rects: [{ x: 0.1, y: 0.1, width: 0.2, height: 0.02 }],
+        },
+        {
+          page_index: 0,
+          rects: [{ x: 0.1, y: 0.2, width: 0.4, height: 0.02 }],
+        },
+      ],
+      "Cross-page quote",
+    );
+
+    expect(created?.color).toBe("yellow");
+    expect(createdCalls).toHaveLength(1);
+    expect(store.docsById.get(61)?.highlights.items).toEqual([created]);
+    expect(store.docsById.get(62)?.highlights.items).toEqual([created]);
+
+    // Near-duplicate selection with same active color is a quiet no-op.
+    const noopResult = await actions.createHighlightFromSelection(
+      62,
+      [
+        {
+          page_index: 0,
+          rects: [{ x: 0.101, y: 0.2, width: 0.398, height: 0.02 }],
+        },
+        {
+          page_index: 1,
+          rects: [{ x: 0.1, y: 0.1, width: 0.2, height: 0.02 }],
+        },
+      ],
+      "Cross-page quote",
+    );
+    expect(noopResult).toBeNull();
+    expect(createdCalls).toHaveLength(1);
+
+    // Near-duplicate selection with different active color recolors existing in place.
+    actions.setActiveHighlightColor("pink");
+    expect(store.toolbarModel?.activeHighlightColor).toBe("pink");
+
+    const recolored = await actions.createHighlightFromSelection(
+      62,
+      [
+        {
+          page_index: 0,
+          rects: [{ x: 0.1, y: 0.2, width: 0.4, height: 0.02 }],
+        },
+        {
+          page_index: 1,
+          rects: [{ x: 0.1, y: 0.1, width: 0.2, height: 0.02 }],
+        },
+      ],
+      "Cross-page quote",
+    );
+    expect(recolored?.color).toBe("pink");
+    expect(createdCalls).toHaveLength(1);
+    expect(recoloredCalls).toEqual([`${created!.id}:pink`]);
+    expect(store.docsById.get(61)?.highlights.items[0]?.color).toBe("pink");
+  });
+
+  it("rolls back optimistic create, recolor, and delete on IPC errors and surfaces workspace banner", async () => {
+    let failCreate = true;
+    let failRecolor = true;
+    let failDelete = true;
+
+    const { store, actions } = createHarness({
+      openDocument: async (path) => makeOpenResponse(70, path),
+      createHighlight: async (params) => {
+        if (failCreate) {
+          throw new ReaderApiError("invalid_highlight", "invalid geometry");
+        }
+        return {
+          id: params.id,
+          color: params.color,
+          segments: [...params.segments],
+          quote: params.quote,
+          created_at_unix: 100,
+          updated_at_unix: 100,
+        };
+      },
+      updateHighlightColor: async (_fp, id, color) => {
+        if (failRecolor) {
+          throw new ReaderApiError("io", "disk write failed");
+        }
+        return {
+          id,
+          color,
+          segments: [
+            {
+              page_index: 0,
+              rects: [{ x: 0.1, y: 0.2, width: 0.3, height: 0.02 }],
+            },
+          ],
+          quote: "Saved quote",
+          created_at_unix: 100,
+          updated_at_unix: 200,
+        };
+      },
+      deleteHighlight: async () => {
+        if (failDelete) {
+          throw new ReaderApiError("io", "disk delete failed");
+        }
+        return true;
+      },
+    });
+    cleanups.push(() => actions.dispose());
+
+    await actions.openPath("/virtual/hl-rollback.pdf");
+    await vi.waitFor(() => {
+      expect(store.activeDoc?.highlights.status).toBe("loaded");
+    });
+
+    const failedCreate = await actions.createHighlightFromSelection(
+      70,
+      [
+        {
+          page_index: 0,
+          rects: [{ x: 0.1, y: 0.2, width: 0.3, height: 0.02 }],
+        },
+      ],
+      "Saved quote",
+    );
+    expect(failedCreate).toBeNull();
+    expect(store.activeDoc?.highlights.items).toEqual([]);
+    expect(store.banner).toEqual({
+      scope: "workspace",
+      message:
+        "Could not save highlight — the selected text geometry is invalid.",
+    });
+
+    actions.dismissBanner();
+    failCreate = false;
+    const created = await actions.createHighlightFromSelection(
+      70,
+      [
+        {
+          page_index: 0,
+          rects: [{ x: 0.1, y: 0.2, width: 0.3, height: 0.02 }],
+        },
+      ],
+      "Saved quote",
+    );
+    expect(created).not.toBeNull();
+
+    const failedRecolor = await actions.recolorHighlight(
+      70,
+      created!.id,
+      "green",
+    );
+    expect(failedRecolor).toBeNull();
+    expect(store.activeDoc?.highlights.items[0]?.color).toBe("yellow");
+    expect(store.banner).toEqual({
+      scope: "workspace",
+      message: "Could not write highlight changes to disk.",
+    });
+
+    actions.dismissBanner();
+    failRecolor = false;
+    await actions.recolorHighlight(70, created!.id, "green");
+    expect(store.activeDoc?.highlights.items[0]?.color).toBe("green");
+
+    await actions.deleteHighlight(70, created!.id);
+    expect(store.activeDoc?.highlights.items).toEqual([
+      expect.objectContaining({ id: created!.id, color: "green" }),
+    ]);
+    expect(store.banner).toEqual({
+      scope: "workspace",
+      message: "Could not write highlight changes to disk.",
+    });
+
+    failDelete = false;
+    await actions.deleteHighlight(70, created!.id);
+    expect(store.activeDoc?.highlights.items).toEqual([]);
+  });
+
+  it("dismisses highlight popover on tab switch, Home switch, zoom, tab close, and clipboard copy", async () => {
+    const copiedTexts: string[] = [];
+    vi.stubGlobal("navigator", {
+      clipboard: {
+        writeText: async (text: string) => {
+          copiedTexts.push(text);
+        },
+      },
+    });
+    cleanups.push(() => vi.unstubAllGlobals());
+
+    let seq = 0;
+    const { store, actions } = createHarness({
+      openDocument: async (path) => makeOpenResponse(++seq, path),
+    });
+    cleanups.push(() => actions.dispose());
+
+    await actions.openPath("/virtual/pop-1.pdf");
+    await actions.openPath("/virtual/pop-2.pdf");
+    await vi.waitFor(() => {
+      expect(store.docsById.get(1)?.highlights.status).toBe("loaded");
+      expect(store.docsById.get(2)?.highlights.status).toBe("loaded");
+    });
+
+    const created = await actions.createHighlightFromSelection(
+      2,
+      [
+        {
+          page_index: 0,
+          rects: [{ x: 0.2, y: 0.3, width: 0.2, height: 0.02 }],
+        },
+      ],
+      "Copied quote text",
+    );
+    expect(created).not.toBeNull();
+
+    const samplePopover = {
+      documentId: 2,
+      highlightId: created!.id,
+      anchorRect: { left: 100, top: 120, width: 80, height: 18 },
+    };
+
+    // Copy closes active popover and writes quote text.
+    actions.openHighlightPopover(samplePopover);
+    expect(store.activeHighlightPopover).toEqual(samplePopover);
+    await actions.copyHighlightQuote(2, created!.id);
+    expect(copiedTexts).toEqual(["Copied quote text"]);
+    expect(store.activeHighlightPopover).toBeNull();
+
+    // Tab switch clears popover.
+    actions.openHighlightPopover(samplePopover);
+    await actions.selectTab("doc-1");
+    expect(store.activeHighlightPopover).toBeNull();
+
+    // Zoom step clears popover.
+    await actions.selectTab("doc-2");
+    actions.openHighlightPopover(samplePopover);
+    actions.requestZoomStep(1);
+    expect(store.activeHighlightPopover).toBeNull();
+
+    // Home switch clears popover.
+    actions.openHighlightPopover(samplePopover);
+    await actions.openHomeTab();
+    expect(store.activeHighlightPopover).toBeNull();
+
+    // Closing last tab clears popover and resets highlighterMode.
+    await actions.selectTab("doc-2");
+    actions.setHighlighterMode(true);
+    actions.openHighlightPopover(samplePopover);
+    await actions.closeTab("doc-2");
+    expect(store.activeHighlightPopover).toBeNull();
+    expect(store.highlighterMode).toBe(true); // doc-1 is still open
+
+    await actions.closeTab("doc-1");
+    expect(store.highlighterMode).toBe(false);
   });
 });

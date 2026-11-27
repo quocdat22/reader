@@ -5,6 +5,9 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { decodeRenderFrame } from "./binary";
 import { normalizeApiError } from "./errors";
 import type {
+  HighlightColor,
+  HighlightRecord,
+  HighlightSegment,
   OpenDocumentResponse,
   OutlineItem,
   PageLink,
@@ -27,6 +30,15 @@ export interface SaveReadingStateParams {
   readonly pageIndex: number;
   readonly zoomMode: ZoomMode;
   readonly zoomScale: number;
+}
+
+export interface CreateHighlightParams {
+  readonly fingerprint: string;
+  readonly lastKnownPath?: string | null;
+  readonly id: string;
+  readonly color: HighlightColor;
+  readonly segments: readonly HighlightSegment[];
+  readonly quote: string;
 }
 
 export interface DragDropHandlers {
@@ -60,6 +72,14 @@ export interface ReaderApi {
   removeRecentFile(path: string): Promise<PersistedState>;
   getRecentCover(path: string, maxSidePx?: number): Promise<ImageData>;
   openExternalUrl(url: string): Promise<void>;
+  getHighlights(fingerprint: string): Promise<HighlightRecord[]>;
+  createHighlight(params: CreateHighlightParams): Promise<HighlightRecord>;
+  updateHighlightColor(
+    fingerprint: string,
+    id: string,
+    color: HighlightColor,
+  ): Promise<HighlightRecord>;
+  deleteHighlight(fingerprint: string, id: string): Promise<boolean>;
   pickPdfFiles(): Promise<string[]>;
   subscribeDragDrop(handlers: DragDropHandlers): Promise<() => void>;
   getWindowControls(): WindowControlsApi;
@@ -170,6 +190,40 @@ export function createTauriReaderApi(): ReaderApi {
 
     openExternalUrl: (url: string) =>
       invokeCommand<void>("open_external_url", { url }),
+
+    getHighlights: (fingerprint: string) =>
+      invokeCommand<HighlightRecord[]>("get_highlights", { fingerprint }),
+
+    createHighlight: ({
+      fingerprint,
+      lastKnownPath,
+      id,
+      color,
+      segments,
+      quote,
+    }: CreateHighlightParams) =>
+      invokeCommand<HighlightRecord>("create_highlight", {
+        fingerprint,
+        last_known_path: lastKnownPath ?? null,
+        id,
+        color,
+        segments,
+        quote,
+      }),
+
+    updateHighlightColor: (
+      fingerprint: string,
+      id: string,
+      color: HighlightColor,
+    ) =>
+      invokeCommand<HighlightRecord>("update_highlight_color", {
+        fingerprint,
+        id,
+        color,
+      }),
+
+    deleteHighlight: (fingerprint: string, id: string) =>
+      invokeCommand<boolean>("delete_highlight", { fingerprint, id }),
 
     pickPdfFiles: async () => {
       try {

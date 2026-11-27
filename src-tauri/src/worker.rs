@@ -19,6 +19,7 @@ use crate::backend::{
 };
 use crate::covers::compute_cover_dimensions;
 use crate::error::ReaderError;
+use crate::highlights::compute_document_fingerprint;
 
 /// Metadata returned when opening a document (or focusing an already-open tab).
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -27,6 +28,8 @@ pub struct OpenedDocument {
     pub document_id: u64,
     /// Canonical filesystem path of the opened document.
     pub canonical_path: PathBuf,
+    /// Content-derived `SHA-256` fingerprint identifying this document across moves/renames.
+    pub document_fingerprint: String,
     /// Embedded document metadata.
     pub metadata: DocumentMetadata,
     /// Intrinsic dimensions (in points) for every page in the document.
@@ -39,6 +42,7 @@ type BackendOpener = Box<dyn FnMut(&Path) -> Result<Box<dyn DocumentBackend>, Re
 
 struct OpenDocument {
     canonical_path: PathBuf,
+    document_fingerprint: String,
     backend: Box<dyn DocumentBackend>,
 }
 
@@ -457,6 +461,7 @@ fn handle_open(
         return Ok(OpenedDocument {
             document_id: existing_id,
             canonical_path,
+            document_fingerprint: existing.document_fingerprint.clone(),
             metadata: existing.backend.metadata().clone(),
             page_dimensions: existing.backend.page_dimensions().to_vec(),
             already_open: true,
@@ -464,6 +469,7 @@ fn handle_open(
     }
 
     let backend = opener(&canonical_path)?;
+    let document_fingerprint = compute_document_fingerprint(&canonical_path)?;
     let metadata = backend.metadata().clone();
     let page_dimensions = backend.page_dimensions().to_vec();
 
@@ -475,6 +481,7 @@ fn handle_open(
         document_id,
         OpenDocument {
             canonical_path: canonical_path.clone(),
+            document_fingerprint: document_fingerprint.clone(),
             backend,
         },
     );
@@ -482,6 +489,7 @@ fn handle_open(
     Ok(OpenedDocument {
         document_id,
         canonical_path,
+        document_fingerprint,
         metadata,
         page_dimensions,
         already_open: false,
@@ -899,6 +907,10 @@ mod tests {
         assert!(second.already_open);
         assert_eq!(first.document_id, second.document_id);
         assert_eq!(first.canonical_path, second.canonical_path);
+        assert!(crate::highlights::is_valid_fingerprint(
+            &first.document_fingerprint
+        ));
+        assert_eq!(first.document_fingerprint, second.document_fingerprint);
         assert_eq!(open_calls.load(Ordering::SeqCst), 1);
     }
 

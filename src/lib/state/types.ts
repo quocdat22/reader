@@ -1,8 +1,11 @@
 import type { SvelteSet } from "svelte/reactivity";
+import type { PageHighlightEntry } from "../domain/highlights";
 import type { NavLocation } from "../domain/history";
 import type { OutlineModel } from "../domain/outline";
 import type { PageSearchEntry } from "../domain/search";
 import type {
+  HighlightColor,
+  HighlightRecord,
   NormalizedPoint,
   NormalizedRect,
   PageDimensions,
@@ -77,9 +80,33 @@ export interface DocHistoryState {
   forwardStack: NavLocation[];
 }
 
+export interface DocHighlightState {
+  status: "idle" | "loading" | "loaded" | "error";
+  items: HighlightRecord[];
+  byPage: Map<number, PageHighlightEntry[]>;
+  /** Monotonic counter bumped whenever highlight-layer DOM must repaint. */
+  version: number;
+  errorMessage: string | null;
+}
+
+export interface HighlightPopoverAnchorRect {
+  readonly left: number;
+  readonly top: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+export interface ActiveHighlightPopover {
+  readonly documentId: number;
+  readonly highlightId: string;
+  /** Anchor coordinates relative to `.viewport-host` client frame. */
+  readonly anchorRect: HighlightPopoverAnchorRect;
+}
+
 export interface DocState {
   readonly documentId: number;
   readonly canonicalPath: string;
+  readonly documentFingerprint: string;
   readonly title: string;
   readonly pageCount: number;
   readonly pageDimensions: readonly PageDimensions[];
@@ -87,6 +114,7 @@ export interface DocState {
   outline: DocOutlineState;
   search: DocSearchState;
   history: DocHistoryState;
+  highlights: DocHighlightState;
 }
 
 export interface BannerState {
@@ -107,6 +135,8 @@ export interface ToolbarModel {
   readonly searchOpen: boolean;
   readonly canGoBack: boolean;
   readonly canGoForward: boolean;
+  readonly highlighterMode: boolean;
+  readonly activeHighlightColor: HighlightColor;
 }
 
 export type FocusTarget =
@@ -150,6 +180,7 @@ export interface ViewportCommandBridge {
 
 export interface TransitionHooks {
   cancelPageInput?: () => void;
+  clearTextSelection?: () => void;
   captureTocScroll?: (doc: DocState) => void;
   isFocusInToc?: () => boolean;
   captureViewportSnapshot?: (doc: DocState) => ViewportSnapshot | null;

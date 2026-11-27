@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { OutlineItem, RecentFile, SearchMatch } from "../../ipc/types";
-import { formatLinkError, formatOpenError } from "../format-error";
+import {
+  formatHighlightError,
+  formatLinkError,
+  formatOpenError,
+} from "../format-error";
 import {
   MAX_NAV_HISTORY,
   pushHistoryEntry,
@@ -272,6 +276,26 @@ describe("formatLinkError", () => {
       "Launcher failed",
     );
     expect(formatLinkError(null)).toBe("Could not open external link.");
+  });
+});
+
+describe("formatHighlightError", () => {
+  it("formats highlight persistence and clipboard failures in plain sentence-case", () => {
+    expect(formatHighlightError({ code: "invalid_highlight" }, "create")).toBe(
+      "Could not save highlight — the selected text geometry is invalid.",
+    );
+    expect(formatHighlightError({ code: "invalid_highlight" }, "recolor")).toBe(
+      "Highlight could not be updated because its data is no longer valid.",
+    );
+    expect(formatHighlightError({ code: "io" }, "load")).toBe(
+      "Could not read saved highlights from disk.",
+    );
+    expect(formatHighlightError({ code: "io" }, "delete")).toBe(
+      "Could not write highlight changes to disk.",
+    );
+    expect(formatHighlightError(new Error("denied"), "copy")).toBe(
+      "Could not copy highlighted text to the clipboard.",
+    );
   });
 });
 

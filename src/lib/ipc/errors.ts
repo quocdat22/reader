@@ -9,6 +9,7 @@ const KNOWN_ERROR_CODES: ReadonlySet<ErrorCode> = new Set<ErrorCode>([
   "document_not_found",
   "cancelled",
   "unsupported_uri",
+  "invalid_highlight",
   "internal",
 ]);
 

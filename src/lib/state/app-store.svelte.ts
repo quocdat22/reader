@@ -1,4 +1,9 @@
 import { SvelteMap, type SvelteSet } from "svelte/reactivity";
+import {
+  DEFAULT_HIGHLIGHT_COLOR,
+  groupHighlightsByPage,
+  type PageHighlightEntry,
+} from "../domain/highlights";
 import type { NavLocation } from "../domain/history";
 import type { OutlineModel } from "../domain/outline";
 import {
@@ -10,6 +15,8 @@ import {
 import { groupMatchesByPage, type PageSearchEntry } from "../domain/search";
 import { deriveTitle } from "../domain/title";
 import type {
+  HighlightColor,
+  HighlightRecord,
   OpenDocumentResponse,
   PageDimensions,
   RecentFile,
@@ -19,7 +26,9 @@ import type {
 import {
   HOME_TAB_ID,
   toDocumentTabId,
+  type ActiveHighlightPopover,
   type BannerState,
+  type DocHighlightState,
   type DocHistoryState,
   type DocOutlineState,
   type DocSearchState,
@@ -91,9 +100,20 @@ class ReactiveDocHistory implements DocHistoryState {
   forwardStack = $state.raw<NavLocation[]>([]);
 }
 
+class ReactiveDocHighlights implements DocHighlightState {
+  status = $state<"idle" | "loading" | "loaded" | "error">("idle");
+  items = $state.raw<HighlightRecord[]>([]);
+  byPage = $state.raw<Map<number, PageHighlightEntry[]>>(
+    groupHighlightsByPage([]),
+  );
+  version = $state(0);
+  errorMessage = $state<string | null>(null);
+}
+
 class ReactiveDocState implements DocState {
   readonly documentId: number;
   readonly canonicalPath: string;
+  readonly documentFingerprint: string;
   readonly title: string;
   readonly pageCount: number;
   readonly pageDimensions: readonly PageDimensions[];
@@ -101,6 +121,7 @@ class ReactiveDocState implements DocState {
   outline: DocOutlineState;
   search: DocSearchState;
   history: DocHistoryState;
+  highlights: DocHighlightState;
 
   constructor(response: OpenDocumentResponse) {
     const saved = response.saved_position;
@@ -123,6 +144,7 @@ class ReactiveDocState implements DocState {
 
     this.documentId = response.document_id;
     this.canonicalPath = response.canonical_path;
+    this.documentFingerprint = response.document_fingerprint;
     this.title = deriveTitle(response.canonical_path, response.metadata.title);
     this.pageCount = pageCount;
     this.pageDimensions = response.page_dimensions;
@@ -136,6 +158,7 @@ class ReactiveDocState implements DocState {
     this.outline = new ReactiveDocOutline();
     this.search = new ReactiveDocSearch();
     this.history = new ReactiveDocHistory();
+    this.highlights = new ReactiveDocHighlights();
   }
 }
 
@@ -151,6 +174,9 @@ export interface AppStore {
   isDraggingFiles: boolean;
   isWindowMaximized: boolean;
   focusRequest: FocusRequest | null;
+  highlighterMode: boolean;
+  activeHighlightColor: HighlightColor;
+  activeHighlightPopover: ActiveHighlightPopover | null;
   readonly orderedTabs: TabItem[];
   readonly activeTab: TabItem | null;
   readonly activeDoc: DocState | null;
@@ -187,6 +213,9 @@ export function createAppStore(): AppStore {
   let isDraggingFiles = $state(false);
   let isWindowMaximized = $state(false);
   let focusRequest = $state.raw<FocusRequest | null>(null);
+  let highlighterMode = $state(false);
+  let activeHighlightColor = $state<HighlightColor>(DEFAULT_HIGHLIGHT_COLOR);
+  let activeHighlightPopover = $state.raw<ActiveHighlightPopover | null>(null);
 
   const orderedTabs = $derived.by(() => {
     const list: TabItem[] = [];
@@ -233,6 +262,8 @@ export function createAppStore(): AppStore {
           searchOpen: activeDoc.search.open,
           canGoBack: activeDoc.history.backStack.length > 0,
           canGoForward: activeDoc.history.forwardStack.length > 0,
+          highlighterMode,
+          activeHighlightColor,
         }
       : null,
   );
@@ -363,6 +394,24 @@ export function createAppStore(): AppStore {
     },
     set focusRequest(value: FocusRequest | null) {
       focusRequest = value;
+    },
+    get highlighterMode() {
+      return highlighterMode;
+    },
+    set highlighterMode(value: boolean) {
+      highlighterMode = value;
+    },
+    get activeHighlightColor() {
+      return activeHighlightColor;
+    },
+    set activeHighlightColor(value: HighlightColor) {
+      activeHighlightColor = value;
+    },
+    get activeHighlightPopover() {
+      return activeHighlightPopover;
+    },
+    set activeHighlightPopover(value: ActiveHighlightPopover | null) {
+      activeHighlightPopover = value;
     },
     get orderedTabs() {
       return orderedTabs;

@@ -7,6 +7,7 @@ use std::path::PathBuf;
 
 use reader_lib::backend::{self, LinkTarget, NormalizedRect, OutlineItem};
 use reader_lib::error::ReaderError;
+use reader_lib::highlights::{compute_document_fingerprint, is_valid_fingerprint};
 use reader_lib::worker::DocumentWorker;
 
 fn fixture_or_skip() -> Option<PathBuf> {
@@ -291,6 +292,7 @@ async fn worker_opens_deduplicates_renders_and_closes_fixture() {
         .await
         .expect("worker should open fixture");
     assert!(!first.already_open);
+    assert!(is_valid_fingerprint(&first.document_fingerprint));
     assert!(first.metadata.page_count > 0);
     assert_eq!(first.page_dimensions.len(), first.metadata.page_count);
 
@@ -300,6 +302,7 @@ async fn worker_opens_deduplicates_renders_and_closes_fixture() {
         .expect("re-opening same fixture should reuse tab");
     assert!(second.already_open);
     assert_eq!(second.document_id, first.document_id);
+    assert_eq!(second.document_fingerprint, first.document_fingerprint);
 
     let epoch = worker.bump_render_epoch();
     let page = worker
@@ -348,5 +351,19 @@ async fn worker_renders_proportional_cover_for_fixture() {
     assert!(
         cover.rgba.iter().any(|&byte| byte != 0),
         "cover RGBA buffer should not be all zeros"
+    );
+}
+
+#[test]
+fn compute_document_fingerprint_returns_valid_hex_digest_for_fixture() {
+    let Some(fixture) = fixture_or_skip() else {
+        return;
+    };
+
+    let fingerprint =
+        compute_document_fingerprint(&fixture).expect("fixture fingerprint should succeed");
+    assert!(
+        is_valid_fingerprint(&fingerprint),
+        "expected 64-char lowercase hex fingerprint, got {fingerprint:?}"
     );
 }

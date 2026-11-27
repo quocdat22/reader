@@ -13,6 +13,7 @@ use crate::backend::{
 use crate::covers::{clamp_cover_max_side, read_cached_cover, write_cached_cover};
 use crate::error::ReaderError;
 use crate::external::open_external_url_blocking;
+use crate::highlights::{CreateHighlightInput, HighlightColor, HighlightRecord, HighlightSegment};
 use crate::state::{AppState, PersistedState, ReadingPosition, ZoomMode};
 use crate::worker::canonicalize_document_path;
 
@@ -23,6 +24,8 @@ pub struct OpenDocumentResponse {
     pub document_id: u64,
     /// Canonical filesystem path of the opened document.
     pub canonical_path: String,
+    /// Content-derived `SHA-256` fingerprint identifying this document across moves/renames.
+    pub document_fingerprint: String,
     /// Embedded document metadata.
     pub metadata: DocumentMetadata,
     /// Intrinsic page dimensions in PDF points for every page.
@@ -82,6 +85,7 @@ pub async fn open_document(
     Ok(OpenDocumentResponse {
         document_id: opened.document_id,
         canonical_path: opened.canonical_path.to_string_lossy().into_owned(),
+        document_fingerprint: opened.document_fingerprint,
         metadata: opened.metadata,
         page_dimensions: opened.page_dimensions,
         saved_position,
@@ -291,6 +295,91 @@ pub async fn open_external_url(url: String) -> Result<(), ReaderError> {
         .map_err(|err| ReaderError::Internal(format!("external URL task failed: {err}")))?
 }
 
+/// Loads all persisted highlights for a document identified by `fingerprint`.
+///
+/// # Errors
+/// - Returns [`ReaderError::InvalidHighlight`] if `fingerprint` is malformed.
+/// - Returns [`ReaderError::Io`] or [`ReaderError::Internal`] if disk I/O fails.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn get_highlights(
+    state: State<'_, AppState>,
+    fingerprint: String,
+) -> Result<Vec<HighlightRecord>, ReaderError> {
+    let store = state.highlight_store();
+    tauri::async_runtime::spawn_blocking(move || store.get(&fingerprint))
+        .await
+        .map_err(|err| ReaderError::Internal(format!("get highlights task failed: {err}")))?
+}
+
+/// Validates and atomically persists a new highlight for the document identified by `fingerprint`.
+///
+/// # Errors
+/// - Returns [`ReaderError::InvalidHighlight`] if inputs fail validation, `id` collides, or the
+///   per-document highlight limit is reached.
+/// - Returns [`ReaderError::Io`] or [`ReaderError::Internal`] if persistence fails.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn create_highlight(
+    state: State<'_, AppState>,
+    fingerprint: String,
+    last_known_path: Option<String>,
+    id: String,
+    color: HighlightColor,
+    segments: Vec<HighlightSegment>,
+    quote: String,
+) -> Result<HighlightRecord, ReaderError> {
+    let store = state.highlight_store();
+    tauri::async_runtime::spawn_blocking(move || {
+        store.create(CreateHighlightInput {
+            fingerprint,
+            last_known_path,
+            id,
+            color,
+            segments,
+            quote,
+        })
+    })
+    .await
+    .map_err(|err| ReaderError::Internal(format!("create highlight task failed: {err}")))?
+}
+
+/// Updates the color of an existing highlight and persists the change atomically.
+///
+/// # Errors
+/// - Returns [`ReaderError::InvalidHighlight`] if `fingerprint` or `id` is invalid, or if the
+///   highlight does not exist.
+/// - Returns [`ReaderError::Io`] or [`ReaderError::Internal`] if persistence fails.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn update_highlight_color(
+    state: State<'_, AppState>,
+    fingerprint: String,
+    id: String,
+    color: HighlightColor,
+) -> Result<HighlightRecord, ReaderError> {
+    let store = state.highlight_store();
+    tauri::async_runtime::spawn_blocking(move || store.update_color(&fingerprint, &id, color))
+        .await
+        .map_err(|err| {
+            ReaderError::Internal(format!("update highlight color task failed: {err}"))
+        })?
+}
+
+/// Deletes an existing highlight by `id` (idempotent) and removes the document JSON file when empty.
+///
+/// # Errors
+/// - Returns [`ReaderError::InvalidHighlight`] if `fingerprint` or `id` is invalid.
+/// - Returns [`ReaderError::Io`] or [`ReaderError::Internal`] if persistence or deletion fails.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn delete_highlight(
+    state: State<'_, AppState>,
+    fingerprint: String,
+    id: String,
+) -> Result<bool, ReaderError> {
+    let store = state.highlight_store();
+    tauri::async_runtime::spawn_blocking(move || store.delete(&fingerprint, &id))
+        .await
+        .map_err(|err| ReaderError::Internal(format!("delete highlight task failed: {err}")))?
+}
+
 fn validate_non_empty_path(path: &str) -> Result<(), ReaderError> {
     if path.trim().is_empty() {
         return Err(ReaderError::InvalidDocument(
@@ -374,6 +463,7 @@ mod tests {
         let response = OpenDocumentResponse {
             document_id: 7,
             canonical_path: "/docs/sample.pdf".to_owned(),
+            document_fingerprint: "a".repeat(64),
             metadata: DocumentMetadata {
                 title: Some("Sample".to_owned()),
                 author: None,
@@ -395,6 +485,7 @@ mod tests {
 
         assert_eq!(json["document_id"], 7);
         assert_eq!(json["canonical_path"], "/docs/sample.pdf");
+        assert_eq!(json["document_fingerprint"], "a".repeat(64));
         assert_eq!(json["already_open"], true);
         assert_eq!(json["saved_position"]["page_index"], 3);
         assert_eq!(json["saved_position"]["zoom_mode"], "fit_width");

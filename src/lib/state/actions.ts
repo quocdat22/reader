@@ -1,8 +1,14 @@
 import {
+  formatHighlightError,
   formatLinkError,
   formatOpenError,
   type FormattedOpenError,
 } from "../domain/format-error";
+import {
+  findNearDuplicateHighlight,
+  groupHighlightsByPage,
+  normalizeHighlightSegments,
+} from "../domain/highlights";
 import {
   pushHistoryEntry,
   stepBackHistory,
@@ -22,13 +28,19 @@ import {
 import { getNextZoomStep } from "../domain/zoom";
 import type { ReaderApi, SaveReadingStateParams } from "../ipc/client";
 import { normalizeApiError } from "../ipc/errors";
-import type { PageLink } from "../ipc/types";
+import type {
+  HighlightColor,
+  HighlightRecord,
+  HighlightSegment,
+  PageLink,
+} from "../ipc/types";
 import type { AppStore } from "./app-store.svelte";
 import type { DocumentScopeRegistry } from "./doc-scope";
 import type { PersistenceQueue } from "./persistence";
 import {
   HOME_TAB_ID,
   toDocumentTabId,
+  type ActiveHighlightPopover,
   type BannerState,
   type DocState,
   type DocumentTabItem,
@@ -114,6 +126,27 @@ export interface AppActions {
   toggleSearch(): void;
   setSearchQuery(query: string): void;
   stepSearchMatch(delta: 1 | -1): void;
+  ensureHighlightsLoaded(
+    documentId: number,
+    options?: { force?: boolean },
+  ): Promise<void>;
+  toggleHighlighterMode(): void;
+  setHighlighterMode(active: boolean): void;
+  setActiveHighlightColor(color: HighlightColor): void;
+  createHighlightFromSelection(
+    documentId: number,
+    rawSegments: readonly HighlightSegment[],
+    quote: string,
+  ): Promise<HighlightRecord | null>;
+  recolorHighlight(
+    documentId: number,
+    highlightId: string,
+    color: HighlightColor,
+  ): Promise<HighlightRecord | null>;
+  deleteHighlight(documentId: number, highlightId: string): Promise<void>;
+  openHighlightPopover(popover: ActiveHighlightPopover): void;
+  closeHighlightPopover(): void;
+  copyHighlightQuote(documentId: number, highlightId: string): Promise<void>;
   removeRecent(path: string): Promise<void>;
   setRecentQuery(query: string): void;
   clearRecentSearch(): void;
@@ -140,6 +173,8 @@ export function createAppActions({
   const inFlightOpenPaths = new Set<string>();
   const closingDocIds = new Set<number>();
   const searchRuntimes = new Map<number, SearchRuntime>();
+  const highlightMutationSeqs = new Map<string, number>();
+  let fallbackHighlightIdSeq = 0;
   let focusSeq = 0;
 
   function requestFocus(target: FocusTarget): void {
@@ -264,6 +299,7 @@ export function createAppActions({
 
     const isActive = store.activeDoc?.documentId === doc.documentId;
     if (isActive) {
+      store.activeHighlightPopover = null;
       hooks.cancelPageInput?.();
       hooks.captureTocScroll?.(doc);
       const snapshot = hooks.captureViewportSnapshot?.(doc) ?? null;
@@ -379,6 +415,7 @@ export function createAppActions({
         scopes.ensure(response.document_id);
         store.docsById.set(response.document_id, newDoc);
         store.tabsById.set(tabId, newTab);
+        void ensureHighlightsLoaded(newDoc.documentId);
 
         if (replaceHomeIfActive) {
           const homeIndex = store.tabOrder.indexOf(HOME_TAB_ID);
@@ -455,6 +492,7 @@ export function createAppActions({
   }
 
   async function openHomeTab(): Promise<void> {
+    store.activeHighlightPopover = null;
     const outgoingDoc = store.activeDoc;
     const alreadyOnHome = store.isHomeActive;
 
@@ -569,6 +607,10 @@ export function createAppActions({
       ? deactivateCurrentDocument({ mode: "close", targetDoc: doc })
       : null;
 
+    if (wasActive || store.activeHighlightPopover?.documentId === documentId) {
+      store.activeHighlightPopover = null;
+    }
+
     scopes.dispose(documentId);
     clearSearchRuntime(documentId);
 
@@ -580,6 +622,7 @@ export function createAppActions({
 
     if (store.docsById.size === 0) {
       // Automatically prune singleton Home tab when zero document tabs remain (CR-001).
+      store.highlighterMode = false;
       store.tabsById.clear();
       store.tabOrder = [];
       store.activeTabId = null;
@@ -687,6 +730,7 @@ export function createAppActions({
     if (!doc) {
       return;
     }
+    store.activeHighlightPopover = null;
     if (hooks.viewportCommands?.setZoomMode) {
       hooks.viewportCommands.setZoomMode(mode);
     } else {
@@ -699,6 +743,7 @@ export function createAppActions({
     if (!doc) {
       return;
     }
+    store.activeHighlightPopover = null;
     const nextScale = getNextZoomStep(doc.view.zoomScale, direction);
     if (hooks.viewportCommands?.setCustomZoom) {
       hooks.viewportCommands.setCustomZoom(nextScale);
@@ -747,6 +792,7 @@ export function createAppActions({
     if (!doc || doc.pageCount <= 0) {
       return;
     }
+    store.activeHighlightPopover = null;
     const clamped = Math.max(0, Math.min(pageIndex, doc.pageCount - 1));
     recordHistoryJump(doc, clamped, 0);
     if (hooks.viewportCommands?.scrollToPage) {
@@ -855,6 +901,7 @@ export function createAppActions({
       return;
     }
 
+    store.activeHighlightPopover = null;
     doc.history.backStack = stepped.nextBackStack;
     doc.history.forwardStack = stepped.nextForwardStack;
 
@@ -1322,6 +1369,7 @@ export function createAppActions({
     if (!store.activeDoc) {
       return;
     }
+    store.activeHighlightPopover = null;
     if (action === "page_down") {
       hooks.viewportCommands?.scrollPageStep?.(1);
     } else if (action === "page_up") {
@@ -1354,10 +1402,425 @@ export function createAppActions({
     await persistence.flushAll();
   }
 
+  function nextHighlightMutationSeq(
+    fingerprint: string,
+    highlightId: string,
+  ): number {
+    const key = `${fingerprint}:${highlightId}`;
+    const next = (highlightMutationSeqs.get(key) ?? 0) + 1;
+    highlightMutationSeqs.set(key, next);
+    return next;
+  }
+
+  function isLatestHighlightMutationSeq(
+    fingerprint: string,
+    highlightId: string,
+    seq: number,
+  ): boolean {
+    return highlightMutationSeqs.get(`${fingerprint}:${highlightId}`) === seq;
+  }
+
+  function generateHighlightId(): string {
+    if (
+      typeof globalThis.crypto !== "undefined" &&
+      typeof globalThis.crypto.randomUUID === "function"
+    ) {
+      return globalThis.crypto.randomUUID();
+    }
+    fallbackHighlightIdSeq += 1;
+    return `hl-${Date.now()}-${fallbackHighlightIdSeq}`;
+  }
+
+  function hasOpenDocWithFingerprint(fingerprint: string): boolean {
+    for (const doc of store.docsById.values()) {
+      if (doc.documentFingerprint === fingerprint) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function syncHighlightsForFingerprint(
+    fingerprint: string,
+    updater: (items: readonly HighlightRecord[]) => HighlightRecord[],
+  ): void {
+    for (const doc of store.docsById.values()) {
+      if (doc.documentFingerprint !== fingerprint) {
+        continue;
+      }
+      const nextItems = updater(doc.highlights.items);
+      doc.highlights.items = nextItems;
+      doc.highlights.byPage = groupHighlightsByPage(nextItems);
+      doc.highlights.version += 1;
+    }
+  }
+
+  function clearActiveTextSelection(): void {
+    hooks.clearTextSelection?.();
+    if (typeof window !== "undefined") {
+      window.getSelection()?.removeAllRanges();
+    }
+  }
+
+  async function ensureHighlightsLoaded(
+    documentId: number,
+    options: { force?: boolean } = {},
+  ): Promise<void> {
+    const doc = store.docsById.get(documentId);
+    if (!doc) {
+      return;
+    }
+    if (doc.highlights.status === "loading") {
+      return;
+    }
+    if (!options.force && doc.highlights.status === "loaded") {
+      return;
+    }
+
+    const signal = scopes.getSignal(documentId);
+    if (!signal || signal.aborted) {
+      return;
+    }
+
+    const versionBefore = doc.highlights.version;
+    doc.highlights.status = "loading";
+    doc.highlights.errorMessage = null;
+
+    try {
+      const records = await api.getHighlights(doc.documentFingerprint);
+      if (
+        signal.aborted ||
+        !scopes.isAlive(documentId, signal) ||
+        store.docsById.get(documentId) !== doc
+      ) {
+        return;
+      }
+
+      doc.highlights.status = "loaded";
+      doc.highlights.errorMessage = null;
+
+      // Avoid overwriting concurrent local mutations applied via same-fingerprint tab sync.
+      if (doc.highlights.version === versionBefore) {
+        const normalizedRecords = Array.isArray(records) ? records : [];
+        doc.highlights.items = normalizedRecords;
+        doc.highlights.byPage = groupHighlightsByPage(normalizedRecords);
+        doc.highlights.version += 1;
+      }
+    } catch (err) {
+      if (
+        signal.aborted ||
+        !scopes.isAlive(documentId, signal) ||
+        store.docsById.get(documentId) !== doc
+      ) {
+        return;
+      }
+
+      const message = formatHighlightError(err, "load");
+      doc.highlights.status = "error";
+      doc.highlights.errorMessage = message;
+      if (store.activeDoc?.documentId === documentId) {
+        store.banner = {
+          scope: "workspace",
+          message,
+        };
+      }
+    }
+  }
+
+  function setHighlighterMode(active: boolean): void {
+    if (store.highlighterMode === active) {
+      return;
+    }
+    store.highlighterMode = active;
+    store.activeHighlightPopover = null;
+    if (active) {
+      clearActiveTextSelection();
+    }
+  }
+
+  function toggleHighlighterMode(): void {
+    setHighlighterMode(!store.highlighterMode);
+  }
+
+  function setActiveHighlightColor(color: HighlightColor): void {
+    store.activeHighlightColor = color;
+  }
+
+  async function createHighlightFromSelection(
+    documentId: number,
+    rawSegments: readonly HighlightSegment[],
+    quote: string,
+  ): Promise<HighlightRecord | null> {
+    const doc = store.docsById.get(documentId);
+    if (!doc || !scopes.isAlive(documentId)) {
+      return null;
+    }
+
+    const segments = normalizeHighlightSegments(rawSegments);
+    if (segments.length === 0) {
+      return null;
+    }
+
+    const activeColor = store.activeHighlightColor;
+    const duplicate = findNearDuplicateHighlight(
+      doc.highlights.items,
+      segments,
+    );
+    if (duplicate) {
+      if (duplicate.color === activeColor) {
+        return null;
+      }
+      return recolorHighlight(documentId, duplicate.id, activeColor);
+    }
+
+    const id = generateHighlightId();
+    const nowUnix = Math.floor(Date.now() / 1000);
+    const optimistic: HighlightRecord = {
+      id,
+      color: activeColor,
+      segments,
+      quote,
+      created_at_unix: nowUnix,
+      updated_at_unix: nowUnix,
+    };
+
+    const fingerprint = doc.documentFingerprint;
+    const lastKnownPath = doc.canonicalPath;
+    syncHighlightsForFingerprint(fingerprint, (items) => [
+      ...items,
+      optimistic,
+    ]);
+
+    try {
+      const persisted = await api.createHighlight({
+        fingerprint,
+        lastKnownPath,
+        id,
+        color: activeColor,
+        segments,
+        quote,
+      });
+      if (!hasOpenDocWithFingerprint(fingerprint)) {
+        return null;
+      }
+      syncHighlightsForFingerprint(fingerprint, (items) =>
+        items.map((item) => (item.id === id ? persisted : item)),
+      );
+      return persisted;
+    } catch (err) {
+      if (!hasOpenDocWithFingerprint(fingerprint)) {
+        return null;
+      }
+      syncHighlightsForFingerprint(fingerprint, (items) =>
+        items.filter((item) => item.id !== id),
+      );
+      if (store.activeHighlightPopover?.highlightId === id) {
+        store.activeHighlightPopover = null;
+      }
+      if (store.activeDoc?.documentFingerprint === fingerprint) {
+        store.banner = {
+          scope: "workspace",
+          message: formatHighlightError(err, "create"),
+        };
+      }
+      return null;
+    }
+  }
+
+  async function recolorHighlight(
+    documentId: number,
+    highlightId: string,
+    color: HighlightColor,
+  ): Promise<HighlightRecord | null> {
+    const doc = store.docsById.get(documentId);
+    if (!doc || !scopes.isAlive(documentId)) {
+      return null;
+    }
+
+    const existing = doc.highlights.items.find(
+      (item) => item.id === highlightId,
+    );
+    if (!existing) {
+      return null;
+    }
+    if (existing.color === color) {
+      return existing;
+    }
+
+    const fingerprint = doc.documentFingerprint;
+    const previousColor = existing.color;
+    const previousUpdatedAt = existing.updated_at_unix;
+    const seq = nextHighlightMutationSeq(fingerprint, highlightId);
+    const optimisticUpdatedAt = Math.floor(Date.now() / 1000);
+
+    syncHighlightsForFingerprint(fingerprint, (items) =>
+      items.map((item) =>
+        item.id === highlightId
+          ? { ...item, color, updated_at_unix: optimisticUpdatedAt }
+          : item,
+      ),
+    );
+
+    try {
+      const persisted = await api.updateHighlightColor(
+        fingerprint,
+        highlightId,
+        color,
+      );
+      if (
+        !hasOpenDocWithFingerprint(fingerprint) ||
+        !isLatestHighlightMutationSeq(fingerprint, highlightId, seq)
+      ) {
+        return null;
+      }
+      syncHighlightsForFingerprint(fingerprint, (items) =>
+        items.map((item) => (item.id === highlightId ? persisted : item)),
+      );
+      return persisted;
+    } catch (err) {
+      if (
+        !hasOpenDocWithFingerprint(fingerprint) ||
+        !isLatestHighlightMutationSeq(fingerprint, highlightId, seq)
+      ) {
+        return null;
+      }
+      syncHighlightsForFingerprint(fingerprint, (items) =>
+        items.map((item) =>
+          item.id === highlightId
+            ? {
+                ...item,
+                color: previousColor,
+                updated_at_unix: previousUpdatedAt,
+              }
+            : item,
+        ),
+      );
+      if (store.activeDoc?.documentFingerprint === fingerprint) {
+        store.banner = {
+          scope: "workspace",
+          message: formatHighlightError(err, "recolor"),
+        };
+      }
+      return null;
+    }
+  }
+
+  async function deleteHighlight(
+    documentId: number,
+    highlightId: string,
+  ): Promise<void> {
+    const doc = store.docsById.get(documentId);
+    if (!doc || !scopes.isAlive(documentId)) {
+      return;
+    }
+
+    const index = doc.highlights.items.findIndex(
+      (item) => item.id === highlightId,
+    );
+    if (index === -1) {
+      return;
+    }
+    const removedRecord = doc.highlights.items[index];
+    if (!removedRecord) {
+      return;
+    }
+
+    if (store.activeHighlightPopover?.highlightId === highlightId) {
+      store.activeHighlightPopover = null;
+    }
+
+    const fingerprint = doc.documentFingerprint;
+    const seq = nextHighlightMutationSeq(fingerprint, highlightId);
+
+    syncHighlightsForFingerprint(fingerprint, (items) =>
+      items.filter((item) => item.id !== highlightId),
+    );
+
+    try {
+      await api.deleteHighlight(fingerprint, highlightId);
+    } catch (err) {
+      if (
+        !hasOpenDocWithFingerprint(fingerprint) ||
+        !isLatestHighlightMutationSeq(fingerprint, highlightId, seq)
+      ) {
+        return;
+      }
+      syncHighlightsForFingerprint(fingerprint, (items) => {
+        if (items.some((item) => item.id === highlightId)) {
+          return [...items];
+        }
+        const restored = [...items];
+        const targetIndex = Math.min(index, restored.length);
+        restored.splice(targetIndex, 0, removedRecord);
+        return restored;
+      });
+      if (store.activeDoc?.documentFingerprint === fingerprint) {
+        store.banner = {
+          scope: "workspace",
+          message: formatHighlightError(err, "delete"),
+        };
+      }
+    }
+  }
+
+  function openHighlightPopover(popover: ActiveHighlightPopover): void {
+    if (!store.docsById.has(popover.documentId)) {
+      return;
+    }
+    store.activeHighlightPopover = popover;
+  }
+
+  function closeHighlightPopover(): void {
+    store.activeHighlightPopover = null;
+  }
+
+  async function copyHighlightQuote(
+    documentId: number,
+    highlightId: string,
+  ): Promise<void> {
+    const doc = store.docsById.get(documentId);
+    const record = doc?.highlights.items.find(
+      (item) => item.id === highlightId,
+    );
+    if (!doc || !record) {
+      return;
+    }
+
+    const clipboard =
+      typeof navigator !== "undefined" ? navigator.clipboard : undefined;
+    if (!clipboard || typeof clipboard.writeText !== "function") {
+      if (store.activeDoc?.documentId === documentId) {
+        store.banner = {
+          scope: "workspace",
+          message: formatHighlightError(null, "copy"),
+        };
+      }
+      return;
+    }
+
+    try {
+      await clipboard.writeText(record.quote);
+      if (store.activeHighlightPopover?.highlightId === highlightId) {
+        store.activeHighlightPopover = null;
+      }
+    } catch (err) {
+      if (
+        store.docsById.has(documentId) &&
+        store.activeDoc?.documentId === documentId
+      ) {
+        store.banner = {
+          scope: "workspace",
+          message: formatHighlightError(err, "copy"),
+        };
+      }
+    }
+  }
+
   function dispose(): void {
     for (const documentId of Array.from(searchRuntimes.keys())) {
       clearSearchRuntime(documentId);
     }
+    highlightMutationSeqs.clear();
     persistence.dispose();
     scopes.disposeAll();
   }
@@ -1392,6 +1855,16 @@ export function createAppActions({
     toggleSearch,
     setSearchQuery,
     stepSearchMatch,
+    ensureHighlightsLoaded,
+    toggleHighlighterMode,
+    setHighlighterMode,
+    setActiveHighlightColor,
+    createHighlightFromSelection,
+    recolorHighlight,
+    deleteHighlight,
+    openHighlightPopover,
+    closeHighlightPopover,
+    copyHighlightQuote,
     removeRecent,
     setRecentQuery,
     clearRecentSearch,

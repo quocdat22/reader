@@ -43,6 +43,10 @@ pub fn run() {
             commands::remove_recent_file,
             commands::get_recent_cover,
             commands::open_external_url,
+            commands::get_highlights,
+            commands::create_highlight,
+            commands::update_highlight_color,
+            commands::delete_highlight,
         ])
         .run(tauri::generate_context!());
 
