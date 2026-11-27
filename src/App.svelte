@@ -1,5 +1,6 @@
 <script lang="ts">
   import DropOverlay from "./components/DropOverlay.svelte";
+  import HighlightPopover from "./components/HighlightPopover.svelte";
   import HomeScreen from "./components/HomeScreen.svelte";
   import NoticeBanner from "./components/NoticeBanner.svelte";
   import SearchBar from "./components/SearchBar.svelte";
@@ -139,6 +140,7 @@
             searchBarEl = el;
           }}
         />
+        <HighlightPopover {store} {actions} getViewportEl={() => viewportEl} />
       </ViewportHost>
     </div>
   </main>

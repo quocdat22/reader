@@ -122,6 +122,12 @@ export function installShortcutRouter({
         handleEscapeFocus();
         return;
       }
+      if (store.activeHighlightPopover) {
+        event.preventDefault();
+        actions.closeHighlightPopover();
+        handleEscapeFocus();
+        return;
+      }
       if (store.activeDoc && store.activeDoc.search.open) {
         event.preventDefault();
         actions.closeSearch({ focusViewport: true });
@@ -266,6 +272,20 @@ export function installShortcutRouter({
     }
 
     if (inEditable || event.altKey) {
+      return;
+    }
+
+    if (
+      !event.shiftKey &&
+      store.activeDoc &&
+      store.activeHighlightPopover &&
+      !isInsideToc(target) &&
+      (event.key === "Delete" || event.key === "Backspace")
+    ) {
+      const popover = store.activeHighlightPopover;
+      event.preventDefault();
+      void actions.deleteHighlight(popover.documentId, popover.highlightId);
+      handleEscapeFocus();
       return;
     }
 

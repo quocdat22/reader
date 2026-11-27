@@ -4,6 +4,7 @@ import {
   DEFAULT_HIGHLIGHT_COLOR,
   HIGHLIGHT_COLORS,
   NEAR_DUPLICATE_OVERLAP_THRESHOLD,
+  computePopoverPosition,
   computeSegmentsOverlapRatio,
   findNearDuplicateHighlight,
   groupHighlightsByPage,
@@ -243,5 +244,89 @@ describe("highlight domain helpers", () => {
     expect(hitTestPageHighlights(entries, 0.05, 0.21)).toBeNull();
     expect(hitTestPageHighlights(entries, -0.1, 0.2)).toBeNull();
     expect(hitTestPageHighlights(entries, Number.NaN, 0.2)).toBeNull();
+  });
+
+  it("centers popover above anchorRect by default and clamps near left and right edges", () => {
+    const centered = computePopoverPosition({
+      anchorRect: { left: 260, top: 200, width: 100, height: 18 },
+      popoverWidth: 156,
+      popoverHeight: 32,
+      containerWidth: 800,
+      containerHeight: 600,
+    });
+    expect(centered).toEqual({
+      left: 232,
+      top: 160,
+      placement: "above",
+    });
+
+    const leftClamped = computePopoverPosition({
+      anchorRect: { left: 4, top: 200, width: 20, height: 18 },
+      popoverWidth: 156,
+      popoverHeight: 32,
+      containerWidth: 800,
+      containerHeight: 600,
+    });
+    expect(leftClamped).toEqual({
+      left: 8,
+      top: 160,
+      placement: "above",
+    });
+
+    const rightClamped = computePopoverPosition({
+      anchorRect: { left: 760, top: 200, width: 32, height: 18 },
+      popoverWidth: 156,
+      popoverHeight: 32,
+      containerWidth: 800,
+      containerHeight: 600,
+    });
+    expect(rightClamped).toEqual({
+      left: 636,
+      top: 160,
+      placement: "above",
+    });
+  });
+
+  it("flips popover below when headroom is tight and handles narrow/short containers", () => {
+    const flipped = computePopoverPosition({
+      anchorRect: { left: 300, top: 14, width: 120, height: 20 },
+      popoverWidth: 156,
+      popoverHeight: 32,
+      containerWidth: 800,
+      containerHeight: 600,
+    });
+    expect(flipped).toEqual({
+      left: 282,
+      top: 42,
+      placement: "below",
+    });
+
+    // When container is narrower than popover + 2 * margin, pin to left margin cleanly.
+    const narrowContainer = computePopoverPosition({
+      anchorRect: { left: 60, top: 100, width: 40, height: 16 },
+      popoverWidth: 156,
+      popoverHeight: 32,
+      containerWidth: 140,
+      containerHeight: 200,
+    });
+    expect(narrowContainer).toEqual({
+      left: 8,
+      top: 60,
+      placement: "above",
+    });
+
+    // When top headroom is small but bottom has even less room in a short viewport, stay above clamped.
+    const bottomTightShort = computePopoverPosition({
+      anchorRect: { left: 200, top: 38, width: 80, height: 14 },
+      popoverWidth: 156,
+      popoverHeight: 32,
+      containerWidth: 800,
+      containerHeight: 60,
+    });
+    expect(bottomTightShort).toEqual({
+      left: 162,
+      top: 8,
+      placement: "above",
+    });
   });
 });

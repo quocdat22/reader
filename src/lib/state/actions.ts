@@ -821,6 +821,7 @@ export function createAppActions({
     if (!doc || !scopes.isAlive(documentId)) {
       return;
     }
+    store.activeHighlightPopover = null;
 
     if (link.target.kind === "internal") {
       if (store.activeDoc?.documentId !== documentId || doc.pageCount <= 0) {
@@ -1774,7 +1775,9 @@ export function createAppActions({
   }
 
   function closeHighlightPopover(): void {
-    store.activeHighlightPopover = null;
+    if (store.activeHighlightPopover !== null) {
+      store.activeHighlightPopover = null;
+    }
   }
 
   async function copyHighlightQuote(

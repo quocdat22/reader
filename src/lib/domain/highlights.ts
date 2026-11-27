@@ -11,6 +11,8 @@ export const MIN_HIGHLIGHT_RECT_DIMENSION = 0.0005;
 export const SAME_LINE_Y_TOLERANCE_RATIO = 0.35;
 export const SAME_LINE_GAP_TOLERANCE_RATIO = 0.6;
 export const NEAR_DUPLICATE_OVERLAP_THRESHOLD = 0.92;
+export const DEFAULT_POPOVER_MARGIN_PX = 8;
+export const DEFAULT_POPOVER_GAP_PX = 8;
 
 export interface PageHighlightEntry {
   readonly highlightId: string;
@@ -532,4 +534,106 @@ export function hitTestPageHighlights(
   }
 
   return bestHit?.hit ?? null;
+}
+
+export interface PopoverAnchorRect {
+  readonly left: number;
+  readonly top: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+export interface ComputePopoverPositionParams {
+  readonly anchorRect: PopoverAnchorRect;
+  readonly popoverWidth: number;
+  readonly popoverHeight: number;
+  readonly containerWidth: number;
+  readonly containerHeight: number;
+  readonly margin?: number;
+  readonly gap?: number;
+}
+
+export interface PopoverPosition {
+  readonly left: number;
+  readonly top: number;
+  readonly placement: "above" | "below";
+}
+
+function sanitizeFiniteNumber(value: number, fallback = 0): number {
+  return Number.isFinite(value) ? value : fallback;
+}
+
+/**
+ * Computes clamped `.viewport-host`-relative `(left, top)` coordinates for `HighlightPopover`,
+ * centering horizontally over `anchorRect`, defaulting above the highlight, and flipping
+ * below when vertical headroom is tighter than `margin + popoverHeight + gap`.
+ */
+export function computePopoverPosition({
+  anchorRect,
+  popoverWidth,
+  popoverHeight,
+  containerWidth,
+  containerHeight,
+  margin = DEFAULT_POPOVER_MARGIN_PX,
+  gap = DEFAULT_POPOVER_GAP_PX,
+}: ComputePopoverPositionParams): PopoverPosition {
+  const safeMargin = Math.max(
+    0,
+    sanitizeFiniteNumber(margin, DEFAULT_POPOVER_MARGIN_PX),
+  );
+  const safeGap = Math.max(
+    0,
+    sanitizeFiniteNumber(gap, DEFAULT_POPOVER_GAP_PX),
+  );
+  const safePopoverW = Math.max(0, sanitizeFiniteNumber(popoverWidth));
+  const safePopoverH = Math.max(0, sanitizeFiniteNumber(popoverHeight));
+  const safeContainerW = Math.max(0, sanitizeFiniteNumber(containerWidth));
+  const safeContainerH = Math.max(0, sanitizeFiniteNumber(containerHeight));
+
+  const anchorLeft = sanitizeFiniteNumber(anchorRect.left);
+  const anchorTop = sanitizeFiniteNumber(anchorRect.top);
+  const anchorW = Math.max(0, sanitizeFiniteNumber(anchorRect.width));
+  const anchorH = Math.max(0, sanitizeFiniteNumber(anchorRect.height));
+
+  const rawLeft = anchorLeft + anchorW / 2 - safePopoverW / 2;
+  const maxLeft = Math.max(
+    safeMargin,
+    safeContainerW - safePopoverW - safeMargin,
+  );
+  const left = Math.max(safeMargin, Math.min(rawLeft, maxLeft));
+
+  const aboveTop = anchorTop - safePopoverH - safeGap;
+  const belowTop = anchorTop + anchorH + safeGap;
+  const maxTop = Math.max(
+    safeMargin,
+    safeContainerH - safePopoverH - safeMargin,
+  );
+
+  if (aboveTop >= safeMargin) {
+    return {
+      left,
+      top: Math.max(safeMargin, Math.min(aboveTop, maxTop)),
+      placement: "above",
+    };
+  }
+
+  const availableAbove = anchorTop - safeMargin;
+  const availableBelow = safeContainerH - safeMargin - (anchorTop + anchorH);
+  const belowFitsCompletely = belowTop <= maxTop;
+  const shouldFlipBelow =
+    belowFitsCompletely || availableBelow >= availableAbove;
+
+  if (shouldFlipBelow) {
+    return {
+      left,
+      top: Math.max(safeMargin, Math.min(belowTop, maxTop)),
+      placement: "below",
+    };
+  }
+
+  return {
+    left,
+    top: Math.max(safeMargin, Math.min(aboveTop, maxTop)),
+    placement: "above",
+  };
 }

@@ -126,6 +126,7 @@ export interface ViewportEngineOptions {
     snapshot: ViewportSnapshot,
     reason: "mount" | "user",
   ) => void;
+  readonly onViewportRelayout?: () => void;
 }
 
 export interface ViewportEngine {
@@ -188,6 +189,7 @@ export function createViewportEngine({
   linkLayer,
   highlightLayer,
   onViewStateChange,
+  onViewportRelayout,
 }: ViewportEngineOptions): ViewportEngine {
   let activeDoc: MountedDocState | null = null;
   let currentSearch: ViewportSearchInput | null = null;
@@ -697,6 +699,7 @@ export function createViewportEngine({
       ? resolveAnchorScrollTop(pageOffsets, anchor, currentDpr)
       : resolveInitialScrollTop(pageOffsets, activeDoc, currentDpr);
     notifyViewState(true, restoringInitial ? "mount" : "user");
+    onViewportRelayout?.();
     scheduleVisibleRenders();
   }
 
@@ -1199,6 +1202,7 @@ export function createViewportEngine({
           currentDpr,
         );
         applySlotHorizontalPositions(trackWidth, currentDpr);
+        onViewportRelayout?.();
       }
       if (pendingInitialPositionRestore && pageOffsets.length > 0) {
         pendingInitialPositionRestore = false;

@@ -1,6 +1,9 @@
 <script lang="ts">
   import { untrack, type Snippet } from "svelte";
-  import { createHighlightLayerEngine } from "../lib/engines/highlight-layer";
+  import {
+    createHighlightLayerEngine,
+    type HighlightLayerEngine,
+  } from "../lib/engines/highlight-layer";
   import { createLinkLayerEngine } from "../lib/engines/link-layer";
   import { createTextLayerEngine } from "../lib/engines/text-layer";
   import {
@@ -35,6 +38,7 @@
   let viewportEl = $state<HTMLDivElement | null>(null);
   let trackEl = $state<HTMLDivElement | null>(null);
   let viewportEngine = $state<ViewportEngine | null>(null);
+  let highlightLayerEngine = $state<HighlightLayerEngine | null>(null);
   let lastMatchedDocId: number | null = null;
   let lastMatchScrollSeq = 0;
 
@@ -90,8 +94,12 @@
       onViewStateChange: (snapshot, reason) => {
         actions.applyViewportSnapshot(snapshot.documentId, snapshot, reason);
       },
+      onViewportRelayout: () => {
+        actions.closeHighlightPopover();
+      },
     });
 
+    highlightLayerEngine = highlightLayer;
     viewportEngine = viewport;
     hooks.captureViewportSnapshot = () => viewport.captureSnapshot();
     hooks.clearTextSelection = () => textLayer.clearActiveSelection();
@@ -117,6 +125,7 @@
       delete hooks.captureViewportSnapshot;
       delete hooks.clearTextSelection;
       delete hooks.onDocumentClosed;
+      highlightLayerEngine = null;
       viewportEngine = null;
       viewport.destroy();
       highlightLayer.destroy();
@@ -197,6 +206,21 @@
     }
     void doc.highlights.version;
     engine.syncUserHighlights(doc.highlights.byPage);
+  });
+
+  // Keep selected highlight outline synchronized across all mounted pages while popover is open.
+  $effect(() => {
+    const engine = highlightLayerEngine;
+    if (!engine) {
+      return;
+    }
+    const popover = store.activeHighlightPopover;
+    const doc = store.activeDoc;
+    const selectedId =
+      popover && doc && popover.documentId === doc.documentId
+        ? popover.highlightId
+        : null;
+    engine.setSelectedHighlightId(selectedId);
   });
 
   // Scroll to active match only when scrollToMatchSeq advances within the same mounted document.

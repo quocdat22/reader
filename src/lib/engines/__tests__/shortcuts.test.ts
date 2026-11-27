@@ -293,4 +293,122 @@ describe("installShortcutRouter highlighter mode shortcuts", () => {
     expect(store.highlighterMode).toBe(false);
     actions.dispose();
   });
+
+  it("handles Esc precedence and Delete/Backspace for activeHighlightPopover", async () => {
+    const store = createAppStore();
+    const scopes = createDocumentScopeRegistry();
+    const api = createFakeApi();
+    const persistence = createPersistenceQueue(api);
+    const actions = createAppActions({ store, api, scopes, persistence });
+
+    const uninstall = installShortcutRouter({
+      store,
+      actions,
+      getViewportEl: () => viewportMock as unknown as HTMLElement,
+      isInsideToc: (target) => target === (tocMock as unknown as EventTarget),
+      isInsideSearch: (target) =>
+        target === (searchMock as unknown as EventTarget),
+    });
+
+    await actions.openPath("/virtual/doc.pdf");
+    const createdA = await actions.createHighlightFromSelection(
+      1,
+      [
+        {
+          page_index: 0,
+          rects: [{ x: 0.1, y: 0.2, width: 0.4, height: 0.02 }],
+        },
+      ],
+      "Highlight A",
+    );
+    const createdB = await actions.createHighlightFromSelection(
+      1,
+      [
+        {
+          page_index: 0,
+          rects: [{ x: 0.1, y: 0.4, width: 0.4, height: 0.02 }],
+        },
+      ],
+      "Highlight B",
+    );
+    expect(createdA).not.toBeNull();
+    expect(createdB).not.toBeNull();
+    expect(store.activeDoc?.highlights.items).toHaveLength(2);
+
+    // Delete/Backspace do nothing when no highlight popover is open.
+    const noPopoverDel = dispatchKeydown({ key: "Delete" });
+    expect(noPopoverDel.preventDefault).not.toHaveBeenCalled();
+    expect(store.activeDoc?.highlights.items).toHaveLength(2);
+
+    // Activate popover + SearchBar + Highlighter Mode together to verify Esc precedence:
+    // Step 2: HighlightPopover -> Step 3: SearchBar -> Step 4: Highlighter Mode.
+    actions.setHighlighterMode(true);
+    actions.openSearch();
+    actions.openHighlightPopover({
+      documentId: 1,
+      highlightId: createdA!.id,
+      anchorRect: { left: 100, top: 200, width: 120, height: 18 },
+    });
+
+    const escPopover = dispatchKeydown({ key: "Escape" });
+    expect(escPopover.preventDefault).toHaveBeenCalledTimes(1);
+    expect(store.activeHighlightPopover).toBeNull();
+    expect(store.activeDoc?.search.open).toBe(true);
+    expect(store.highlighterMode).toBe(true);
+
+    dispatchKeydown({ key: "Escape" });
+    expect(store.activeDoc?.search.open).toBe(false);
+    expect(store.highlighterMode).toBe(true);
+
+    dispatchKeydown({ key: "Escape" });
+    expect(store.highlighterMode).toBe(false);
+
+    // Reopen popover for A: editable inputs and modified chords must not delete highlight.
+    actions.openHighlightPopover({
+      documentId: 1,
+      highlightId: createdA!.id,
+      anchorRect: { left: 100, top: 200, width: 120, height: 18 },
+    });
+
+    const inputEl = new MockElement("INPUT");
+    const editableBackspace = dispatchKeydown({
+      key: "Backspace",
+      target: inputEl,
+    });
+    expect(editableBackspace.preventDefault).not.toHaveBeenCalled();
+    expect(store.activeDoc?.highlights.items).toHaveLength(2);
+
+    dispatchKeydown({ key: "Delete", ctrlKey: true });
+    dispatchKeydown({ key: "Backspace", shiftKey: true });
+    dispatchKeydown({ key: "Delete", altKey: true });
+    expect(store.activeDoc?.highlights.items).toHaveLength(2);
+
+    // Unmodified Delete removes A, closes popover, blurs any popover button, and focuses viewport.
+    const popoverDeleteBtn = new MockElement("BUTTON");
+    activeElement = popoverDeleteBtn;
+    const delEvent = dispatchKeydown({
+      key: "Delete",
+      target: popoverDeleteBtn,
+    });
+    expect(delEvent.preventDefault).toHaveBeenCalledTimes(1);
+    expect(store.activeHighlightPopover).toBeNull();
+    expect(popoverDeleteBtn.blur).toHaveBeenCalledTimes(1);
+    expect(store.activeDoc?.highlights.items.map((h) => h.id)).toEqual([
+      createdB!.id,
+    ]);
+
+    // Unmodified Backspace deletes B when B's popover is open.
+    actions.openHighlightPopover({
+      documentId: 1,
+      highlightId: createdB!.id,
+      anchorRect: { left: 100, top: 320, width: 120, height: 18 },
+    });
+    const backspaceEvent = dispatchKeydown({ key: "Backspace" });
+    expect(backspaceEvent.preventDefault).toHaveBeenCalledTimes(1);
+    expect(store.activeHighlightPopover).toBeNull();
+    expect(store.activeDoc?.highlights.items).toEqual([]);
+
+    uninstall();
+    actions.dispose();
+  });
 });
