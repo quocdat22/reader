@@ -14,18 +14,19 @@ Reader treats the document page as the sole focus: a slim tab strip, a single-ro
 - **Crisp rasterization & zoom**: Device-pixel-snapped layout (up to 3x DPR) and PDFium anti-aliased RGBA8 rendering (clamped to `4096px` max side) with Fit width (default), Fit page, and discrete zoom steps (`25%`–`400%`) via toolbar buttons, keyboard shortcuts, or `Ctrl+Wheel`.
 - **Table of contents drawer**: Collapsible outline pane (`Ctrl+B`) lazily loaded and cached per tab, supporting nested chapters, active-section scroll tracking, and WAI-ARIA tree keyboard navigation.
 - **Text selection & copy**: Lazy transparent HTML text overlay mapped from normalized `[0.0, 1.0]` page geometry (rescaled purely in CSS on zoom without re-querying Rust) with clean line/spacing formatting on `Ctrl+C`.
+- **Clickable PDF links & navigation history**: Standard PDF `/Link` annotations supporting internal page/coordinate destinations and allowlisted external URIs (`http`, `https`, `mailto`), paired with per-tab Back/Forward history (`Alt+ArrowLeft` / `Alt+ArrowRight`, mouse buttons `3`/`4`, and toolbar controls) without interrupting drag-to-select.
+- **On-page 3-color text highlights**: Minimalist Highlighter Mode (`Ctrl+Shift+H`, `1`/`2`/`3` for `Yellow` / `Green` / `Pink`) supporting cross-page passages and an on-page popover to recolor, copy, or delete. Highlights are keyed by a deterministic `SHA-256` content fingerprint and persisted atomically under `<app_data_dir>/highlights/<fingerprint>.json` without modifying source PDFs.
 - **Per-tab in-document search**: `Ctrl+F` search bar with debounced case-insensitive substring matching, `current / total` match counter, `Enter` / `Shift+Enter` navigation, and page-level highlight boxes isolated per tab.
-- **Session continuity**: Stores up to 10 recent files and per-file reading positions (`page_index`, `zoom_mode`, `zoom_scale`) atomically via `<app_data_dir>/state.json` (`state.json.tmp` → flush → rename).
+- **Session continuity**: Persists recent files and per-file reading positions (`page_index`, `zoom_mode`, `zoom_scale`, up to 200 entries) atomically via `<app_data_dir>/state.json` (`state.json.tmp` → flush → rename).
 
 ---
 
 ## Scope & Non-Goals
 
-Reader v1 intentionally keeps a tight scope (see [docs/SPEC.md](docs/SPEC.md) for the full specification). The following are **out of scope by design**:
+Reader keeps a tight minimalist scope (see [docs/SPEC.md](docs/SPEC.md) for the v1 baseline and [docs/CHANGES.md](docs/CHANGES.md) for post-v1 amendments including clickable links and on-page text highlights). The following remain **out of scope by design**:
 
-- Annotations, highlights, bookmarks, notes, form filling, editing, or printing
+- Highlight notes/comments, highlight drawers or sidebars, undo/redo, freehand/shape markup, bookmarks, form filling, source PDF editing, or printing
 - Dark or sepia reading modes and PDF page color inversion
-- Clickable internal or external PDF hyperlinks
 - Split views or multi-window session sync
 - CSS frameworks, client routers, extra state libraries, or heavy PDF JS wrappers
 - Document formats beyond PDF in v1 (the `DocumentBackend` Rust trait defines the boundary for future formats)
@@ -46,10 +47,14 @@ On macOS, `Cmd` also works for primary modifier chords (`Ctrl+Tab` / `Ctrl+Shift
 | `Enter` / `Shift+Enter` | Next / previous search match (when search is open) |
 | `Ctrl+G` | Focus page number jump input |
 | `Ctrl+B` | Toggle Table of Contents drawer |
+| `Alt+ArrowLeft` / `Alt+ArrowRight` | Navigate back / forward in per-tab link and jump history (also Mouse 3 / 4) |
+| `Ctrl+Shift+H` | Toggle Highlighter Mode (active document) |
+| `1` / `2` / `3` | Switch active highlight color (`Yellow` / `Green` / `Pink`) in Highlighter Mode |
+| `Delete` / `Backspace` | Delete the selected highlight when the highlight popover is open |
 | `Ctrl++` / `Ctrl+-` / `Ctrl+0` | Zoom in / zoom out / reset to Fit width |
 | `Ctrl+Wheel` | Step zoom inside the viewport |
 | `PageDown` / `PageUp` / `Home` / `End` | Scroll or jump within the active document |
-| `Esc` | Close search bar or blur active toolbar/TOC focus |
+| `Esc` | Close highlight popover, close search bar, exit Highlighter Mode, or blur active toolbar/TOC focus |
 
 ---
 
@@ -101,21 +106,23 @@ Tauri v2 bundles `pdfium.dll` and `PDFIUM-LICENSE.txt` via `bundle.resources` di
 ## Architecture Overview
 
 ```text
-+-------------------------------------------------------------------+
-| Frontend: Vite + TypeScript + Svelte 5 (src/ -> dist/)            |
-|  - Svelte 5 components (TabStrip, Toolbar, HomeScreen, TOC, Search) |
-|  - Runes state (src/lib/state/) + pure domain helpers (domain/)   |
-|  - Imperative engines (viewport, text-layer, tab-drag, shortcuts) |
-|  - Typed IPC via @tauri-apps/api + plugin-dialog (withGlobalTauri: false) |
-+----------------------------+--------------------------------------+
-                             | Tauri IPC (JSON DTOs + Binary RGBA8)
-+----------------------------v--------------------------------------+
-| Backend: Tauri v2 / Rust 2024 (src-tauri/src/)                    |
-|  - commands.rs   Thin async #[tauri::command] handlers            |
-|  - state.rs      AppState + atomic state.json persistence         |
-|  - worker.rs     Single doc-worker thread + epoch cancellation    |
-|  - backend/      DocumentBackend trait + PdfBackend (PDFium)      |
-+-------------------------------------------------------------------+
++----------------------------------------------------------------------------+
+| Frontend: Vite + TypeScript + Svelte 5 (src/ -> dist/)                     |
+|  - Svelte 5 components (TabStrip, Toolbar, Home, TOC, Search, Popover)     |
+|  - Runes state (src/lib/state/) + pure domain helpers (domain/)            |
+|  - Imperative engines (viewport, text, highlight & link layers)            |
+|  - Typed IPC via @tauri-apps/api + plugin-dialog (withGlobalTauri: false)  |
++------------------------------------+---------------------------------------+
+                                     | Tauri IPC (JSON DTOs + Binary RGBA8)
++------------------------------------v---------------------------------------+
+| Backend: Tauri v2 / Rust 2024 (src-tauri/src/)                             |
+|  - commands.rs   Thin async #[tauri::command] handlers                     |
+|  - state.rs      AppState + atomic state.json persistence                  |
+|  - highlights.rs Content fingerprinting + highlight JSON store             |
+|  - external.rs   Allowlisted URI validation & OS launch                    |
+|  - worker.rs     Single doc-worker thread + epoch cancellation             |
+|  - backend/      DocumentBackend trait + PdfBackend (PDFium)               |
++----------------------------------------------------------------------------+
 ```
 
 Key architectural decisions:
@@ -123,7 +130,7 @@ Key architectural decisions:
 - **Single `doc-worker` thread (`worker.rs`)**: All PDFium document calls execute on one dedicated OS thread (`doc-worker`) owning a `HashMap<u64, OpenDocument>` keyed by monotonic `document_id`, backed by a process-wide `OnceLock<Pdfium>` (`thread_safe`) singleton. Async Tauri commands send typed requests over `tokio::sync::mpsc` with `oneshot` replies so the async runtime is never blocked.
 - **Epoch-based render cancellation**: Rapid scrolling, zooming, or tab switching increments a shared `AtomicU64` (`render_epoch`). Stale queued render requests or renders for closing tabs are discarded early with `ReaderError::Cancelled`.
 - **Binary RGBA8 frame wire format**: `render_page` bypasses JSON/base64/PNG encoding and returns raw bytes `[width: u32 LE][height: u32 LE][RGBA8 pixels]` via `tauri::ipc::Response`, decoded on the frontend with `DataView` and `ImageData`.
-- **Normalized coordinates (`[0.0, 1.0]`)**: Text spans and search match rectangles are normalized on the Rust side in top-left page space so frontend zoom changes scale overlays purely in CSS.
+- **Normalized coordinates (`[0.0, 1.0]`)**: Text spans, search match rectangles, PDF link boxes/destinations, and highlight segments are normalized on top-left page space so frontend zoom changes scale overlays purely in CSS.
 
 ### Repository Layout
 
@@ -133,7 +140,9 @@ Key architectural decisions:
 │   ├── SPEC.md                 # Product scope, IPC contract, and visual spec
 │   ├── PHASES.md               # Phased implementation roadmap and exit gates
 │   ├── CHANGES.md              # Post-v1 change index and authoring rules
-│   └── frontend-svelte5/       # CR-007 Svelte 5 + Vite + TypeScript architecture & phases
+│   ├── changes/                # Numbered post-v1 CR specs (CR-001 .. CR-009)
+│   ├── frontend-svelte5/       # CR-007 Svelte 5 + Vite + TypeScript architecture & phases
+│   └── highlights/             # CR-010 on-page 3-color text highlights spec & phases
 ├── public/                     # Static assets copied to dist/ (logo.png)
 ├── scripts/
 │   └── fetch-pdfium.ps1        # Fetches & SHA-256-verifies pinned pdfium.dll (chromium/8125)
@@ -141,10 +150,10 @@ Key architectural decisions:
 ├── src/                        # Svelte 5 + TypeScript frontend
 │   ├── main.ts                 # App mount, initial hydration, and native drag-drop wiring
 │   ├── App.svelte              # Top-level chrome, Home/Reader switcher, and shortcuts wiring
-│   ├── components/             # Svelte 5 UI components (TabStrip, Toolbar, TocDrawer, SearchBar, etc.)
+│   ├── components/             # Svelte 5 UI components (TabStrip, Toolbar, TocDrawer, SearchBar, HighlightPopover, etc.)
 │   ├── lib/
-│   │   ├── domain/             # Pure TypeScript domain helpers (zoom, outline, recents, search, title)
-│   │   ├── engines/            # Imperative TypeScript engines (viewport, text-layer, tab-drag, shortcuts)
+│   │   ├── domain/             # Pure TypeScript domain helpers (zoom, outline, recents, search, history, highlights, title)
+│   │   ├── engines/            # Imperative TypeScript engines (viewport, text/highlight/link layers, tab-drag, shortcuts)
 │   │   ├── ipc/                # Typed IPC client, binary RGBA decoder, and error mapping
 │   │   └── state/              # Svelte 5 Runes store, actions, doc-scope tokens, persistence
 │   └── styles/                 # Design tokens, base accessibility rules, and viewport layer CSS
@@ -157,6 +166,9 @@ Key architectural decisions:
 │   │   ├── main.rs             # Binary entrypoint
 │   │   ├── lib.rs              # Tauri builder, plugin/state wiring, command registration
 │   │   ├── commands.rs         # Thin Tauri IPC command handlers & validation
+│   │   ├── covers.rs           # Recent file first-page cover cache & rendering
+│   │   ├── external.rs         # Allowlisted external URI validation & OS launcher
+│   │   ├── highlights.rs       # Pure-Rust SHA-256 fingerprinting & per-doc highlight store
 │   │   ├── state.rs            # AppState, CLI arg parsing, atomic state.json persistence
 │   │   ├── worker.rs           # Dedicated doc-worker thread & epoch cancellation
 │   │   ├── error.rs            # ReaderError (thiserror) & JSON ErrorResponse
